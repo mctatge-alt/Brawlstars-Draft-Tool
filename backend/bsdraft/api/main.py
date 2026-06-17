@@ -38,6 +38,12 @@ _last_check: float = 0.0   # epoch of the last sync attempt (liveness)
 _last_change: float = 0.0  # epoch of the last actual data change
 
 
+def _build_stats() -> DraftStats:
+    """Build empirical stats with the configured recency half-life. Used at startup and on
+    every live refresh, so both paths weight the meta identically."""
+    return DraftStats(halflife_days=settings.stats_halflife_days)
+
+
 async def _refresh_loop() -> None:
     """Periodically re-sync the dataset and hot-swap rebuilt stats into the live engine."""
     global _last_check, _last_change
@@ -48,7 +54,7 @@ async def _refresh_loop() -> None:
             changed = await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
             _last_check = time.time()
             if changed and _engine is not None:
-                new_stats = await loop.run_in_executor(None, DraftStats)
+                new_stats = await loop.run_in_executor(None, _build_stats)
                 _engine.stats = new_stats  # atomic reference swap — readers see old or new, never partial
                 _last_change = time.time()
                 logger.info("draft stats refreshed: %d matches", new_stats.n)
@@ -65,7 +71,7 @@ async def lifespan(app: FastAPI):
     if settings.data_url:
         await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
         _last_check = _last_change = time.time()
-    _engine = DraftEngine(DraftStats(), WinProbModel())
+    _engine = DraftEngine(_build_stats(), WinProbModel())
     if settings.player_tag:
         try:
             async with BrawlStarsClient() as client:

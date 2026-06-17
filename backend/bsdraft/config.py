@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     data_url: str = ""
     refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
 
+    # Engine tuning
+    stats_halflife_days: float = 21.0  # recency half-life (days) for empirical stats; <=0 disables decay
+
     @property
     def seed_countries(self):
         return [c.strip() for c in self.crawl_seed_countries.split(",") if c.strip()]
