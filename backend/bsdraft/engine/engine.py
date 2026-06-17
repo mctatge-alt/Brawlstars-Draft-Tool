@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from bsdraft.constants import BRAWLER_CLASSES
 from bsdraft.data import reference as R
@@ -31,11 +31,17 @@ class BanScore:
 
 
 class DraftEngine:
-    def __init__(self, stats: Optional[DraftStats] = None, model: Optional[WinProbModel] = None):
+    def __init__(self, stats: Optional[DraftStats] = None, model: Optional[WinProbModel] = None,
+                 bracket_stats: Optional[Dict[str, DraftStats]] = None):
         self.stats = stats if stats is not None else DraftStats()
+        self.bracket_stats: Dict[str, DraftStats] = bracket_stats or {}
         self.model = model
         self.roster = None        # dict[brawler_id, Mastery] when a player roster is loaded
         self.roster_name = ""
+
+    def _stats_for(self, state: DraftState) -> DraftStats:
+        """The requested rank-bracket table when it exists, else the global stats."""
+        return self.bracket_stats.get(state.rank_bracket, self.stats)
 
     def candidates(self, state: DraftState, roster=None) -> List[int]:
         used = state.picked_or_banned()
@@ -47,12 +53,13 @@ class DraftEngine:
     def recommend_bans(self, state: DraftState, top: int = 6) -> List[BanScore]:
         """Rank brawlers by threat on this map: strong win-rate, weighted up if contested."""
         used = state.picked_or_banned()
+        stats = self._stats_for(state)
         rows = []
         for b in R.load_brawlers():
             if b.id in used:
                 continue
-            rate = self.stats.brawler_rate(b.id, state.map_id)
-            use = self.stats.use_rate(b.id, state.map_id)
+            rate = stats.brawler_rate(b.id, state.map_id)
+            use = stats.use_rate(b.id, state.map_id)
             threat = 0.85 * rate.winrate + 0.15 * min(1.0, use * 3.0)
             rows.append(BanScore(b.id, _name_map().get(b.id, str(b.id)), b.cls,
                                  threat, rate.winrate, use, rate.confidence))
@@ -60,7 +67,8 @@ class DraftEngine:
         return rows[:top]
 
     def recommend_picks(self, state: DraftState, top: int = 10, weights=None, roster=None) -> List[PickScore]:
-        scored = [score_candidate(state, c, self.stats, self.model, weights, roster)
+        stats = self._stats_for(state)
+        scored = [score_candidate(state, c, stats, self.model, weights, roster)
                   for c in self.candidates(state, roster)]
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:top]

@@ -29,7 +29,8 @@ from bsdraft.engine.drift import detect_drift
 from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
-from bsdraft.engine.stats import DraftStats
+from bsdraft.engine.stats import DraftStats, build_bracketed
+from bsdraft.engine.tiers import BRACKETS
 from bsdraft.models.serve import WinProbModel
 
 logger = logging.getLogger("bsdraft.api")
@@ -40,10 +41,11 @@ _last_change: float = 0.0  # epoch of the last actual data change
 _meta_cache = None         # (data_version, MetaReport); recomputed lazily when data changes
 
 
-def _build_stats() -> DraftStats:
-    """Build empirical stats with the configured recency half-life. Used at startup and on
-    every live refresh, so both paths weight the meta identically."""
-    return DraftStats(halflife_days=settings.stats_halflife_days)
+def _build_stats():
+    """Build global stats + per-rank-bracket tables with the configured recency half-life.
+    Used at startup and on every live refresh, so both weight the meta identically.
+    Returns ``(global_stats, {bracket: stats})``."""
+    return build_bracketed(halflife_days=settings.stats_halflife_days)
 
 
 async def _refresh_loop() -> None:
@@ -56,10 +58,10 @@ async def _refresh_loop() -> None:
             changed = await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
             _last_check = time.time()
             if changed and _engine is not None:
-                new_stats = await loop.run_in_executor(None, _build_stats)
-                _engine.stats = new_stats  # atomic reference swap — readers see old or new, never partial
+                g, br = await loop.run_in_executor(None, _build_stats)
+                _engine.stats, _engine.bracket_stats = g, br  # swap in rebuilt tables
                 _last_change = time.time()
-                logger.info("draft stats refreshed: %d matches", new_stats.n)
+                logger.info("draft stats refreshed: %d matches, %d bracket(s)", g.n, len(br))
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — a refresh hiccup must not kill the loop
@@ -73,7 +75,8 @@ async def lifespan(app: FastAPI):
     if settings.data_url:
         await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
         _last_check = _last_change = time.time()
-    _engine = DraftEngine(_build_stats(), WinProbModel())
+    g, br = _build_stats()
+    _engine = DraftEngine(g, WinProbModel(), bracket_stats=br)
     if settings.player_tag:
         try:
             async with BrawlStarsClient() as client:
@@ -148,7 +151,8 @@ def reference():
                  games=int(_engine.stats.map_games.get(m.id, 0)) if _engine else 0)
         for m in R.load_ranked_maps()
     ]
-    return S.ReferenceResponse(brawlers=brawlers, maps=maps, modes=list(RANKED_MODES))
+    brackets = [b for b in BRACKETS if _engine and b in _engine.bracket_stats]
+    return S.ReferenceResponse(brawlers=brawlers, maps=maps, modes=list(RANKED_MODES), brackets=brackets)
 
 
 @app.get("/api/roster", response_model=S.RosterResponse)
@@ -171,7 +175,7 @@ def recommend(req: S.RecommendRequest):
     state = DraftState(
         map_id=req.map_id, mode=req.mode,
         our_team=list(req.our_team), their_team=list(req.their_team), bans=list(req.bans),
-        we_pick_first=req.we_pick_first, solo_queue=req.solo_queue,
+        we_pick_first=req.we_pick_first, solo_queue=req.solo_queue, rank_bracket=req.rank_bracket,
     )
     roster = _engine.roster if (req.personalize and _engine.roster) else None
     composition = _engine.composition(state)
@@ -190,7 +194,7 @@ def recommend(req: S.RecommendRequest):
     if can_search:
         picks = []
         for sr in _engine.search_recommend(state, top=req.top, roster=roster):
-            scored = vars(score_candidate(state, sr.brawler_id, _engine.stats, _engine.model, roster=roster))
+            scored = vars(score_candidate(state, sr.brawler_id, _engine._stats_for(state), _engine.model, roster=roster))
             scored["projected_winprob"] = sr.projected_winprob
             picks.append(S.PickRec(**scored))
     else:

@@ -14,6 +14,7 @@ class RecommendRequest(BaseModel):
     bans: List[int] = []
     we_pick_first: bool = True
     solo_queue: bool = True
+    rank_bracket: Optional[str] = None   # condition stats on this rank bracket, e.g. "Masters"
     phase: str = "pick"          # "pick" | "ban"
     use_search: bool = False     # seat-aware minimax lookahead
     personalize: bool = False    # weight by the player's roster / mastery
@@ -107,6 +108,7 @@ class ReferenceResponse(BaseModel):
     brawlers: List[BrawlerRef]
     maps: List[MapRef]
     modes: List[str]
+    brackets: List[str] = []     # rank brackets with enough data to condition on
 
 
 class OwnedBrawler(BaseModel):
