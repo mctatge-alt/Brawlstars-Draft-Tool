@@ -155,7 +155,7 @@ IP-locked API key: the **crawler stays on a machine whose IP is on the key's all
 rebuilt stats — no restart, and no key in the cloud.
 
 ```text
-your machine            GitHub Release           Render (free)          Vercel (free)
+your machine            GitHub Release           Render (free)        Cloudflare Pages
 collect.py --loop  ──▶  matches.jsonl.gz   ──▶   FastAPI: sync +   ◀──  Next.js board
 (IP-locked key)         (tag: data-latest)       rebuild stats         (public URL)
 ```
@@ -170,8 +170,10 @@ Render's free 512 MB tier and cold-starts fast; PyTorch is used only for *traini
    ```
 2. **Backend → Render.** New → Blueprint → this repo (uses [`render.yaml`](render.yaml), free
    plan). It sets `DATA_URL` to the release asset and `REFRESH_SECONDS=600`. No API token needed.
-3. **Frontend → Vercel.** Import the repo, set Root Directory = `frontend`, and set
-   `NEXT_PUBLIC_API_BASE` to your Render URL.
+3. **Frontend → Cloudflare Pages.** Create a Pages project from this repo with **root
+   directory** `frontend`, **build command** `npx next build`, **output directory** `out`
+   (the app is a static export). Add a build-time variable `NEXT_PUBLIC_API_BASE` = your
+   Render URL (it's inlined at build, so it must be set before the build runs).
 4. **Keep it warm.** Free instances sleep after ~15 min idle; set repo variable
    `RENDER_HEALTH_URL` = `<render-url>/api/health` to enable
    [`keepwarm.yml`](.github/workflows/keepwarm.yml).
