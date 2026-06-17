@@ -16,9 +16,16 @@ export type BanRec = {
   map_winrate: number; use_rate: number; confidence: number;
 };
 export type Warning = { text: string; severity: string };
+export type RoleTip = { name: string; cls: string; role: string };
+export type ThreatTip = { name: string; cls: string; tip: string };
+export type GamePlan = {
+  objective: string; win_condition: string; archetype: string; playstyle: string;
+  roles: RoleTip[]; threats: ThreatTip[]; tips: string[]; avoid: string[]; compensate: string[];
+};
 export type RecommendResponse = {
   phase: string; picks: PickRec[]; bans: BanRec[];
-  composition: Record<string, number>; warnings: Warning[]; next_to_act: string | null;
+  composition: Record<string, number>; warnings: Warning[];
+  game_plan: GamePlan | null; next_to_act: string | null;
 };
 
 export type OwnedBrawler = { id: number; mastery: number; gaps: string[] };

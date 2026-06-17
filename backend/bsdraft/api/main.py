@@ -94,13 +94,14 @@ def recommend(req: S.RecommendRequest):
     roster = _engine.roster if (req.personalize and _engine.roster) else None
     composition = _engine.composition(state)
     warnings = _engine.composition_report(state)["warnings"]
+    game_plan = S.GamePlan(**_engine.game_plan(state))
     next_to_act = state.next_to_act()
 
     if req.phase == "ban":
         bans = _engine.recommend_bans(state, top=req.top)
         return S.RecommendResponse(
             phase="ban", bans=[S.BanRec(**vars(b)) for b in bans],
-            composition=composition, warnings=warnings, next_to_act=next_to_act,
+            composition=composition, warnings=warnings, game_plan=game_plan, next_to_act=next_to_act,
         )
 
     can_search = req.use_search and _engine.model and _engine.model.available and state.our_slots_left > 0
@@ -115,5 +116,5 @@ def recommend(req: S.RecommendRequest):
 
     return S.RecommendResponse(
         phase="pick", picks=picks,
-        composition=composition, warnings=warnings, next_to_act=next_to_act,
+        composition=composition, warnings=warnings, game_plan=game_plan, next_to_act=next_to_act,
     )

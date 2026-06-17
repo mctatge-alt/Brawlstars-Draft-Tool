@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse,
+  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan,
   getReference, getRoster, recommend,
 } from "@/lib/api";
 
@@ -312,6 +312,7 @@ export default function DraftBoard() {
           </div>
         </div>
       </div>
+      {recs?.game_plan && our.some((x) => x != null) && <GamePlanPanel gp={recs.game_plan} />}
       <footer className="text-center text-xs text-[var(--muted)] mt-6">
         Recommendations fuse a trained win-prob model with empirical map stats · not affiliated with Supercell
       </footer>
@@ -382,5 +383,61 @@ function BanCard({ r, i, b, onClick }: { r: BanRec; i: number; b?: Brawler; onCl
         </div>
       </div>
     </button>
+  );
+}
+
+function GamePlanPanel({ gp }: { gp: GamePlan }) {
+  const Section = ({ label, color, mark, items }: { label: string; color: string; mark: string; items: string[] }) =>
+    items.length === 0 ? null : (
+      <div>
+        <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color }}>{label}</div>
+        <ul className="space-y-1">
+          {items.map((t, i) => <li key={i} className="text-xs text-[var(--muted)]">{mark} {t}</li>)}
+        </ul>
+      </div>
+    );
+  return (
+    <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="font-semibold">📋 Game plan</h2>
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-[var(--panel2)] text-[var(--muted)]">{gp.archetype}</span>
+      </div>
+      <div className="rounded-lg p-3 mb-4" style={{ background: "#3b82f615", border: "1px solid #3b82f640" }}>
+        <div className="text-[11px] uppercase tracking-wide mb-0.5" style={{ color: "#5aa0ff" }}>Win condition</div>
+        <div className="text-sm">{gp.win_condition}</div>
+        {gp.objective && <div className="text-xs text-[var(--muted)] mt-1">Objective: {gp.objective}</div>}
+      </div>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Your roles</div>
+          <div className="space-y-1.5">
+            {gp.roles.map((r) => (
+              <div key={r.name} className="text-xs">
+                <span className="font-semibold" style={{ color: CLASS_COLOR[r.cls] || "#aaa" }}>{r.name}</span>
+                <span className="text-[var(--muted)]"> — {r.role}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-xs text-[var(--muted)] mt-2 italic">{gp.playstyle}</div>
+        </div>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Vs their threats</div>
+          <div className="space-y-1.5">
+            {gp.threats.length === 0 && <div className="text-xs text-[var(--muted)]">No enemy picks on the board yet.</div>}
+            {gp.threats.map((t) => (
+              <div key={t.name} className="text-xs">
+                <span className="font-semibold" style={{ color: CLASS_COLOR[t.cls] || "#aaa" }}>{t.name}</span>
+                <span className="text-[var(--muted)]"> — {t.tip}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="grid md:grid-cols-3 gap-4 mt-4 pt-3 border-t border-[var(--border)]">
+        <Section label="Do" color="#3ec46d" mark="✓" items={gp.tips} />
+        <Section label="Avoid" color="#e0566f" mark="✕" items={gp.avoid} />
+        <Section label="Compensate" color="#e8c34a" mark="⚠" items={gp.compensate} />
+      </div>
+    </div>
   );
 }

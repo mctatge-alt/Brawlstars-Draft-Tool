@@ -53,12 +53,37 @@ class Warning(BaseModel):
     severity: str  # "info" | "warn" | "critical"
 
 
+class RoleTip(BaseModel):
+    name: str
+    cls: str
+    role: str
+
+
+class ThreatTip(BaseModel):
+    name: str
+    cls: str
+    tip: str
+
+
+class GamePlan(BaseModel):
+    objective: str = ""
+    win_condition: str = ""
+    archetype: str = ""
+    playstyle: str = ""
+    roles: List[RoleTip] = []
+    threats: List[ThreatTip] = []
+    tips: List[str] = []
+    avoid: List[str] = []
+    compensate: List[str] = []
+
+
 class RecommendResponse(BaseModel):
     phase: str
     picks: List[PickRec] = []
     bans: List[BanRec] = []
     composition: Dict[str, int] = {}
     warnings: List[Warning] = []
+    game_plan: Optional[GamePlan] = None
     next_to_act: Optional[str] = None
 
 

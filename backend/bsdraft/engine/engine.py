@@ -14,6 +14,7 @@ from bsdraft.engine.scoring import PickScore, _class_of, _name_map, score_candid
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.stats import DraftStats
 from bsdraft.engine import composition as composition_mod
+from bsdraft.engine import gameplan as gameplan_mod
 from bsdraft.engine.search import SeatAwareSearch
 from bsdraft.models.serve import WinProbModel
 
@@ -70,6 +71,9 @@ class DraftEngine:
 
     def composition_report(self, state: DraftState) -> dict:
         return composition_mod.analyze(state)
+
+    def game_plan(self, state: DraftState) -> dict:
+        return gameplan_mod.game_plan(state)
 
     def composition(self, state: DraftState) -> dict:
         counts = Counter(_class_of(b) for b in state.our_team)
