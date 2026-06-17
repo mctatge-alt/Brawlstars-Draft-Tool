@@ -25,6 +25,7 @@ from bsdraft.constants import RANKED_MODES
 from bsdraft.data import reference as R
 from bsdraft.data import sync
 from bsdraft.engine import mastery
+from bsdraft.engine.drift import detect_drift
 from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
@@ -36,6 +37,7 @@ logger = logging.getLogger("bsdraft.api")
 _engine: Optional[DraftEngine] = None
 _last_check: float = 0.0   # epoch of the last sync attempt (liveness)
 _last_change: float = 0.0  # epoch of the last actual data change
+_meta_cache = None         # (data_version, MetaReport); recomputed lazily when data changes
 
 
 def _build_stats() -> DraftStats:
@@ -109,6 +111,32 @@ def health():
     }
 
 
+@app.get("/api/meta", response_model=S.MetaResponse)
+def meta():
+    """Has the meta shifted (balance change / new brawler) recently? Computed from the synced
+    match data and cached per data version, so the frontend can poll it cheaply to show a
+    'meta shifted — recommendations updating' banner."""
+    global _meta_cache
+    if _meta_cache is None or _meta_cache[0] != _last_change:
+        _meta_cache = (_last_change, detect_drift())
+    rep = _meta_cache[1]
+    names = {b.id: b.name for b in R.load_brawlers()}
+    return S.MetaResponse(
+        shifted=rep.shifted, n_recent=rep.n_recent, n_prior=rep.n_prior,
+        new_brawlers=[names.get(b, str(b)) for b in rep.new_brawlers],
+        shifts=[
+            S.MetaShift(
+                brawler_id=s.brawler_id, name=s.name, kind=s.kind,
+                wr_before=round(s.wr_before, 4), wr_after=round(s.wr_after, 4),
+                use_before=round(s.use_before, 4), use_after=round(s.use_after, 4),
+                z=round(s.z, 2),
+            )
+            for s in rep.shifts
+        ],
+        note=rep.note,
+    )
+
+
 @app.get("/api/reference", response_model=S.ReferenceResponse)
 def reference():
     brawlers = [
@@ -117,7 +145,7 @@ def reference():
     ]
     maps = [
         S.MapRef(id=m.id, name=m.name, mode=m.mode, image_url=m.image_url,
-                 games=_engine.stats.map_games.get(m.id, 0) if _engine else 0)
+                 games=int(_engine.stats.map_games.get(m.id, 0)) if _engine else 0)
         for m in R.load_ranked_maps()
     ]
     return S.ReferenceResponse(brawlers=brawlers, maps=maps, modes=list(RANKED_MODES))

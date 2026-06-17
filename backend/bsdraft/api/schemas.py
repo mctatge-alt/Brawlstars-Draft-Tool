@@ -121,3 +121,23 @@ class RosterResponse(BaseModel):
     name: str
     owned: List[OwnedBrawler] = []
     error: Optional[str] = None
+
+
+class MetaShift(BaseModel):
+    brawler_id: int
+    name: str
+    kind: str          # "buff" | "nerf"
+    wr_before: float
+    wr_after: float
+    use_before: float
+    use_after: float
+    z: float
+
+
+class MetaResponse(BaseModel):
+    shifted: bool
+    n_recent: int
+    n_prior: int
+    new_brawlers: List[str] = []   # names of brawlers seen in play but not yet in the reference
+    shifts: List[MetaShift] = []
+    note: str = ""
