@@ -38,6 +38,15 @@ export type Health = {
   refresh_seconds: number; last_check: number | null; last_change: number | null;
 };
 
+export type MetaShift = {
+  brawler_id: number; name: string; kind: string;
+  wr_before: number; wr_after: number; use_before: number; use_after: number; z: number;
+};
+export type Meta = {
+  shifted: boolean; n_recent: number; n_prior: number;
+  new_brawlers: string[]; shifts: MetaShift[]; note: string;
+};
+
 export type RecommendBody = {
   map_id: number; mode: string; our_team: number[]; their_team: number[]; bans: number[];
   we_pick_first: boolean; solo_queue: boolean; phase: "pick" | "ban";
@@ -55,6 +64,12 @@ export async function getReference(): Promise<Reference> {
 export async function getHealth(): Promise<Health> {
   const res = await fetch(`${API_BASE}/api/health`);
   if (!res.ok) throw new Error(`health: ${res.status}`);
+  return res.json();
+}
+
+export async function getMeta(): Promise<Meta> {
+  const res = await fetch(`${API_BASE}/api/meta`);
+  if (!res.ok) throw new Error(`meta: ${res.status}`);
   return res.json();
 }
 

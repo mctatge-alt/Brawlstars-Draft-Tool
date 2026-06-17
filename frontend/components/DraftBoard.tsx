@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health,
-  getReference, getRoster, recommend, getHealth,
+  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health, Meta,
+  getReference, getRoster, recommend, getHealth, getMeta,
 } from "@/lib/api";
 
 const CLASS_COLOR: Record<string, string> = {
@@ -58,6 +58,27 @@ function Avatar({ b, size = 56, dim, ring }: { b?: Brawler; size?: number; dim?:
   );
 }
 
+function MetaBanner({ meta }: { meta: Meta }) {
+  const buffs = meta.shifts.filter((s) => s.kind === "buff").slice(0, 3).map((s) => s.name);
+  const nerfs = meta.shifts.filter((s) => s.kind === "nerf").slice(0, 3).map((s) => s.name);
+  const parts: string[] = [];
+  if (meta.new_brawlers.length) parts.push(`new: ${meta.new_brawlers.join(", ")}`);
+  if (buffs.length) parts.push(`▲ ${buffs.join(", ")}`);
+  if (nerfs.length) parts.push(`▼ ${nerfs.join(", ")}`);
+  return (
+    <div className="rounded-lg px-4 py-2.5 mb-4 flex items-center gap-3"
+      style={{ background: "#e8c34a18", border: "1px solid #e8c34a55" }}>
+      <span className="text-lg">📈</span>
+      <div>
+        <div className="font-semibold text-sm" style={{ color: "#e8c34a" }}>
+          Meta shift detected — stats are catching up to the live meta
+        </div>
+        <div className="text-xs text-[var(--muted)]">{parts.join(" · ") || "recent balance change"}</div>
+      </div>
+    </div>
+  );
+}
+
 function StatusBanner({ step }: { step: Step }) {
   const cfg =
     step.kind === "ban"
@@ -83,6 +104,7 @@ export default function DraftBoard() {
   const [ref, setRef] = useState<Reference | null>(null);
   const [roster, setRoster] = useState<RosterResponse | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
+  const [meta, setMeta] = useState<Meta | null>(null);
   const [mapId, setMapId] = useState<number | null>(null);
   const [bans, setBans] = useState<(number | null)[]>(Array(BAN_N).fill(null));
   const [our, setOur] = useState<(number | null)[]>(Array(TEAM_N).fill(null));
@@ -106,6 +128,7 @@ export default function DraftBoard() {
     }).catch((e) => setErr(String(e)));
     getRoster().then(setRoster).catch(() => {});
     getHealth().then(setHealth).catch(() => {});
+    getMeta().then(setMeta).catch(() => {});
   }, []);
 
   const byId = useMemo(() => {
@@ -269,6 +292,7 @@ export default function DraftBoard() {
 
       {err && <div className="mb-4 text-sm text-[#e0566f]">API error: {err}. Is the backend running on :8000?</div>}
 
+      {meta?.shifted && <MetaBanner meta={meta} />}
       <StatusBanner step={step} />
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-5">
