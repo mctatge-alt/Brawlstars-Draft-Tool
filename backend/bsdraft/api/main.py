@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from bsdraft.api import schemas as S
-from bsdraft.collect.client import BrawlStarsClient
+from bsdraft.collect.client import BrawlStarsClient, normalize_tag
 from bsdraft.config import settings
 from bsdraft.constants import RANKED_MODES
 from bsdraft.data import reference as R
@@ -29,8 +29,9 @@ from bsdraft.engine.drift import detect_drift
 from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
+from bsdraft.engine.playerrank import build_rank_index, latest_ranked_tier
 from bsdraft.engine.stats import DraftStats, build_bracketed
-from bsdraft.engine.tiers import BRACKETS
+from bsdraft.engine.tiers import BRACKETS, bracket_of_tier, tier_label
 from bsdraft.models.serve import WinProbModel
 
 logger = logging.getLogger("bsdraft.api")
@@ -39,6 +40,7 @@ _engine: Optional[DraftEngine] = None
 _last_check: float = 0.0   # epoch of the last sync attempt (liveness)
 _last_change: float = 0.0  # epoch of the last actual data change
 _meta_cache = None         # (data_version, MetaReport); recomputed lazily when data changes
+_rank_idx_cache = None     # (data_version, {tag: (ts, tier)}); recomputed lazily when data changes
 
 
 def _build_stats():
@@ -46,6 +48,14 @@ def _build_stats():
     Used at startup and on every live refresh, so both weight the meta identically.
     Returns ``(global_stats, {bracket: stats})``."""
     return build_bracketed(halflife_days=settings.stats_halflife_days)
+
+
+def _rank_index():
+    """Cached tag -> (ts, tier) index from the synced matches; rebuilt when data changes."""
+    global _rank_idx_cache
+    if _rank_idx_cache is None or _rank_idx_cache[0] != _last_change:
+        _rank_idx_cache = (_last_change, build_rank_index())
+    return _rank_idx_cache[1]
 
 
 async def _refresh_loop() -> None:
@@ -168,6 +178,32 @@ async def roster(tag: Optional[str] = None):
         return S.RosterResponse(loaded=True, tag=t, name=name, owned=owned)
     except Exception as e:  # noqa: BLE001
         return S.RosterResponse(loaded=False, tag=t, name="", error=str(e))
+
+
+@app.get("/api/rank", response_model=S.RankResponse)
+async def rank(tag: str):
+    """Resolve a player's current Ranked tier — from our collected match data first (no API
+    key needed, works on the public host), then a live battle-log fetch when a valid key is
+    configured (local/home)."""
+    tag_n = normalize_tag(tag)
+    if not tag_n:
+        return S.RankResponse(found=False, tag="", error="enter a player tag")
+    hit = _rank_index().get(tag_n)
+    if hit:
+        t = hit[1]
+        return S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
+                              bracket=bracket_of_tier(t), source="dataset")
+    try:
+        async with BrawlStarsClient() as client:
+            battles = await client.get_battlelog(tag_n)
+        t = latest_ranked_tier(battles, tag_n)
+        if t:
+            return S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
+                                  bracket=bracket_of_tier(t), source="live")
+        return S.RankResponse(found=False, tag=tag_n, error="no recent ranked games found")
+    except Exception:
+        return S.RankResponse(found=False, tag=tag_n,
+                              error="not in our data, and live lookup isn't available here")
 
 
 @app.post("/api/recommend", response_model=S.RecommendResponse)

@@ -125,6 +125,16 @@ class RosterResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RankResponse(BaseModel):
+    found: bool
+    tag: str
+    tier: Optional[int] = None          # Ranked tier index 1-22
+    tier_label: Optional[str] = None    # e.g. "Legendary II"
+    bracket: Optional[str] = None       # e.g. "Legendary"
+    source: Optional[str] = None        # "dataset" | "live"
+    error: Optional[str] = None
+
+
 class MetaShift(BaseModel):
     brawler_id: int
     name: str

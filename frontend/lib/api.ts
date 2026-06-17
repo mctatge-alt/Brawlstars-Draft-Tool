@@ -2,7 +2,7 @@
 
 export type Brawler = { id: number; name: string; cls: string; rarity: string; image_url: string };
 export type GameMap = { id: number; name: string; mode: string; image_url: string; games: number };
-export type Reference = { brawlers: Brawler[]; maps: GameMap[]; modes: string[] };
+export type Reference = { brawlers: Brawler[]; maps: GameMap[]; modes: string[]; brackets: string[] };
 
 export type PickRec = {
   brawler_id: number; name: string; cls: string; score: number; map_winrate: number;
@@ -33,6 +33,11 @@ export type RosterResponse = {
   loaded: boolean; tag: string; name: string; owned: OwnedBrawler[]; error?: string | null;
 };
 
+export type RankInfo = {
+  found: boolean; tag: string; tier: number | null; tier_label: string | null;
+  bracket: string | null; source: string | null; error?: string | null;
+};
+
 export type Health = {
   status: string; model: boolean; matches: number; roster: boolean;
   refresh_seconds: number; last_check: number | null; last_change: number | null;
@@ -49,7 +54,7 @@ export type Meta = {
 
 export type RecommendBody = {
   map_id: number; mode: string; our_team: number[]; their_team: number[]; bans: number[];
-  we_pick_first: boolean; solo_queue: boolean; phase: "pick" | "ban";
+  we_pick_first: boolean; solo_queue: boolean; rank_bracket?: string | null; phase: "pick" | "ban";
   use_search: boolean; personalize: boolean; top: number;
 };
 
@@ -70,6 +75,12 @@ export async function getHealth(): Promise<Health> {
 export async function getMeta(): Promise<Meta> {
   const res = await fetch(`${API_BASE}/api/meta`);
   if (!res.ok) throw new Error(`meta: ${res.status}`);
+  return res.json();
+}
+
+export async function getRank(tag: string): Promise<RankInfo> {
+  const res = await fetch(`${API_BASE}/api/rank?tag=${encodeURIComponent(tag)}`);
+  if (!res.ok) throw new Error(`rank: ${res.status}`);
   return res.json();
 }
 

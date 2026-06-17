@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health, Meta,
-  getReference, getRoster, recommend, getHealth, getMeta,
+  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health, Meta, RankInfo,
+  getReference, getRoster, recommend, getHealth, getMeta, getRank,
 } from "@/lib/api";
 
 const CLASS_COLOR: Record<string, string> = {
@@ -58,6 +58,45 @@ function Avatar({ b, size = 56, dim, ring }: { b?: Brawler; size?: number; dim?:
   );
 }
 
+function RankWidget({ tag, setTag, rankInfo, loading, onCheck, bracket, onBracket, brackets }: {
+  tag: string; setTag: (s: string) => void; rankInfo: RankInfo | null; loading: boolean;
+  onCheck: () => void; bracket: string | null; onBracket: (b: string | null) => void; brackets: string[];
+}) {
+  const opts = bracket && !brackets.includes(bracket) ? [...brackets, bracket] : brackets;
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="text-sm font-semibold">🏅 Your rank</span>
+      <div className="flex items-center gap-1.5">
+        <input value={tag} onChange={(e) => setTag(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && onCheck()} placeholder="#PLAYERTAG"
+          className="bg-[var(--panel2)] border border-[var(--border)] rounded-md px-2.5 py-1.5 text-sm w-36 uppercase" />
+        <button onClick={onCheck} disabled={loading || !tag.trim()}
+          className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)] disabled:opacity-50">
+          {loading ? "…" : "Check"}
+        </button>
+      </div>
+      {rankInfo?.found && rankInfo.tier_label && (
+        <span className="text-sm px-2.5 py-1 rounded-full font-semibold"
+          style={{ background: "#e8c34a22", color: "#e8c34a" }}
+          title={rankInfo.source === "live" ? "from a live lookup" : "from our match data"}>
+          {rankInfo.tier_label}
+        </span>
+      )}
+      {rankInfo && !rankInfo.found && (
+        <span className="text-xs text-[var(--muted)]">{rankInfo.error || "not found"} — pick your bracket →</span>
+      )}
+      <label className="ml-auto text-xs text-[var(--muted)] flex items-center gap-1.5">
+        Recommendations for
+        <select value={bracket ?? ""} onChange={(e) => onBracket(e.target.value || null)}
+          className="bg-[var(--panel2)] border border-[var(--border)] rounded-md px-2 py-1 text-sm">
+          <option value="">All ranks</option>
+          {opts.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 function MetaBanner({ meta }: { meta: Meta }) {
   const buffs = meta.shifts.filter((s) => s.kind === "buff").slice(0, 3).map((s) => s.name);
   const nerfs = meta.shifts.filter((s) => s.kind === "nerf").slice(0, 3).map((s) => s.name);
@@ -105,6 +144,10 @@ export default function DraftBoard() {
   const [roster, setRoster] = useState<RosterResponse | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
+  const [tag, setTag] = useState("");
+  const [rankInfo, setRankInfo] = useState<RankInfo | null>(null);
+  const [bracket, setBracket] = useState<string | null>(null);
+  const [rankLoading, setRankLoading] = useState(false);
   const [mapId, setMapId] = useState<number | null>(null);
   const [bans, setBans] = useState<(number | null)[]>(Array(BAN_N).fill(null));
   const [our, setOur] = useState<(number | null)[]>(Array(TEAM_N).fill(null));
@@ -129,6 +172,16 @@ export default function DraftBoard() {
     getRoster().then(setRoster).catch(() => {});
     getHealth().then(setHealth).catch(() => {});
     getMeta().then(setMeta).catch(() => {});
+    const savedBracket = localStorage.getItem("bsdraft.bracket");
+    if (savedBracket) setBracket(savedBracket);
+    const savedTag = localStorage.getItem("bsdraft.tag");
+    if (savedTag) {
+      setTag(savedTag);
+      getRank(savedTag).then((info) => {
+        setRankInfo(info);
+        if (info.found && info.bracket) setBracket(info.bracket);
+      }).catch(() => {});
+    }
   }, []);
 
   const byId = useMemo(() => {
@@ -169,7 +222,8 @@ export default function DraftBoard() {
       their_team: their.filter((x): x is number => x != null),
       bans: bans.filter((x): x is number => x != null),
       we_pick_first: wePickFirst, solo_queue: solo, phase,
-      use_search: useSearch, personalize: personalize && personalizeReady, top: 12,
+      use_search: useSearch, personalize: personalize && personalizeReady,
+      rank_bracket: bracket, top: 12,
     };
     setLoading(true);
     const t = setTimeout(() => {
@@ -179,7 +233,7 @@ export default function DraftBoard() {
         .finally(() => setLoading(false));
     }, 120);
     return () => clearTimeout(t);
-  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady]);
+  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, bracket]);
 
   const setZone = (zone: Zone, idx: number, val: number | null) => {
     const apply = (arr: (number | null)[]) => arr.map((x, i) => (i === idx ? val : x));
@@ -198,6 +252,31 @@ export default function DraftBoard() {
     setBans(Array(BAN_N).fill(null));
     setOur(Array(TEAM_N).fill(null));
     setTheir(Array(TEAM_N).fill(null));
+  };
+
+  const selectBracket = (b: string | null) => {
+    setBracket(b);
+    if (b) localStorage.setItem("bsdraft.bracket", b);
+    else localStorage.removeItem("bsdraft.bracket");
+  };
+
+  const checkRank = async () => {
+    const t = tag.trim();
+    if (!t) return;
+    setRankLoading(true);
+    try {
+      const info = await getRank(t);
+      setRankInfo(info);
+      if (info.found) {
+        setTag(info.tag);
+        localStorage.setItem("bsdraft.tag", info.tag);
+        if (info.bracket) selectBracket(info.bracket);
+      }
+    } catch {
+      setRankInfo({ found: false, tag: t, tier: null, tier_label: null, bracket: null, source: null, error: "lookup failed" });
+    } finally {
+      setRankLoading(false);
+    }
   };
 
   const filtered = useMemo(() => {
@@ -289,6 +368,9 @@ export default function DraftBoard() {
           Reset
         </button>
       </header>
+
+      <RankWidget tag={tag} setTag={setTag} rankInfo={rankInfo} loading={rankLoading}
+        onCheck={checkRank} bracket={bracket} onBracket={selectBracket} brackets={ref?.brackets || []} />
 
       {err && <div className="mb-4 text-sm text-[#e0566f]">API error: {err}. Is the backend running on :8000?</div>}
 
