@@ -119,9 +119,10 @@ backend/
     data/        Reference loaders, encoders, dataset builder
     models/      PyTorch win-probability model + serving
     engine/      Stats, fused scoring, bans, seat-aware search, warnings, mastery
-  scripts/       collect.py · train.py · smoke_test.py
+  scripts/       collect.py · train.py · export_model.py · smoke_test.py
 frontend/        Next.js draft board
 data/reference/  Brawlers, maps, modes, class overrides (committed)
+deploy/          launchd sample for the home crawler (render.yaml + keepwarm.yml at root)
 docs/            Model card, methodology, charts
 ```
 
@@ -136,6 +137,7 @@ cp .env.example .env          # add BRAWLSTARS_API_TOKEN + PLAYER_TAG
 # 2. Collect data and train (one-time; needs an API key)
 PYTHONPATH=backend python backend/scripts/collect.py --target 30000
 PYTHONPATH=backend python backend/scripts/train.py
+PYTHONPATH=backend python backend/scripts/export_model.py   # winprob.pt -> winprob.npz (served in NumPy)
 
 # 3. Run the app
 PYTHONPATH=backend uvicorn bsdraft.api.main:app --port 8000     # backend
@@ -145,18 +147,53 @@ npm --prefix frontend install && npm --prefix frontend run dev  # → http://loc
 > Get a free API key at [developer.brawlstars.com](https://developer.brawlstars.com). Keys are
 > IP-locked — allow the public IP of the machine running the crawler.
 
-## Deployment
+## Deployment — free, self-updating public site
 
-- **Frontend** → Vercel (Next.js native). Set `NEXT_PUBLIC_API_BASE` to your backend URL.
-- **Backend** → any Python host (Render / Railway / Fly.io). Mount the trained `winprob.pt`
-  and the `data/reference/` files; set `BRAWLSTARS_API_TOKEN` + `PLAYER_TAG`. Note the API
-  key's IP allow-list must include the host's egress IP.
+The live site costs **$0/mo** and refreshes its data while in use. The constraint is the
+IP-locked API key: the **crawler stays on a machine whose IP is on the key's allow-list** and
+*publishes* data to a GitHub Release; a free cloud API *pulls* it on an interval and hot-swaps
+rebuilt stats — no restart, and no key in the cloud.
+
+```text
+your machine            GitHub Release           Render (free)          Vercel (free)
+collect.py --loop  ──▶  matches.jsonl.gz   ──▶   FastAPI: sync +   ◀──  Next.js board
+(IP-locked key)         (tag: data-latest)       rebuild stats         (public URL)
+```
+
+The API serves the model in **pure NumPy** (exported `winprob.npz`, no torch), so it fits
+Render's free 512 MB tier and cold-starts fast; PyTorch is used only for *training*, locally.
+
+1. **Publish a dataset** (creates the `data-latest` release on first run):
+   ```bash
+   PYTHONPATH=backend python backend/scripts/export_model.py            # commit winprob.npz
+   PYTHONPATH=backend python backend/scripts/collect.py --target 2000 --publish
+   ```
+2. **Backend → Render.** New → Blueprint → this repo (uses [`render.yaml`](render.yaml), free
+   plan). It sets `DATA_URL` to the release asset and `REFRESH_SECONDS=600`. No API token needed.
+3. **Frontend → Vercel.** Import the repo, set Root Directory = `frontend`, and set
+   `NEXT_PUBLIC_API_BASE` to your Render URL.
+4. **Keep it warm.** Free instances sleep after ~15 min idle; set repo variable
+   `RENDER_HEALTH_URL` = `<render-url>/api/health` to enable
+   [`keepwarm.yml`](.github/workflows/keepwarm.yml).
+5. **Run the home crawler** so data keeps flowing:
+   ```bash
+   PYTHONPATH=backend python backend/scripts/collect.py --loop 3600 --target 800 --publish
+   ```
+   Or install it as a login agent (macOS): edit the paths in
+   [`deploy/com.bsdraft.crawler.plist`](deploy/com.bsdraft.crawler.plist), copy to
+   `~/Library/LaunchAgents/`, then `launchctl load` it.
+
+> **Tradeoffs.** The site stays up on the cloud, but data only advances while your crawler
+> machine is on (watch `matches` / `last_change` at `/api/health`). **Roster/mastery
+> personalization is local-only** — it needs a live call to the IP-locked key, which can't run
+> from the cloud, so the public site runs without it.
 
 ## Roadmap
 
 - [x] Data pipeline · win-prob model · draft engine · web app
 - [x] Seat-aware search · composition warnings · roster mastery
-- [ ] Best-of-3 series awareness · map-geometry features · continuous data refresh
+- [x] Continuous data refresh · free, self-updating public deployment (NumPy serving)
+- [ ] Best-of-3 series awareness · map-geometry features
 
 ## Credits
 

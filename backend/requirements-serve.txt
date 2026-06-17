@@ -1,0 +1,11 @@
+# Serve-only dependencies for the deployed API (Render free tier).
+# Deliberately excludes torch / sklearn / pandas / matplotlib: the model is served in
+# pure NumPy (bsdraft/models/serve.py, from the committed winprob.npz). Training and data
+# collection on your own machine use the full backend/requirements.txt.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pydantic-settings>=2.2
+httpx>=0.27          # data sync (download the matches release asset)
+tenacity>=8.2        # imported transitively via collect/client.py
+numpy>=1.26

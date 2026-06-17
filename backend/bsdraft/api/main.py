@@ -2,11 +2,16 @@
 
     PYTHONPATH=backend uvicorn bsdraft.api.main:app --reload --port 8000
 
-Loads the engine (empirical stats + trained model) once at startup, and the player's
-roster (for mastery personalization) if PLAYER_TAG is set.
+Loads the engine (empirical stats + trained model) at startup. When DATA_URL is set, it
+also syncs the published matches dataset and rebuilds stats every REFRESH_SECONDS, so the
+live site stays current with no restart. Loads the player's roster (mastery
+personalization) if PLAYER_TAG is set — a local-only feature (needs the IP-locked key).
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -18,6 +23,7 @@ from bsdraft.collect.client import BrawlStarsClient
 from bsdraft.config import settings
 from bsdraft.constants import RANKED_MODES
 from bsdraft.data import reference as R
+from bsdraft.data import sync
 from bsdraft.engine import mastery
 from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.scoring import score_candidate
@@ -25,12 +31,40 @@ from bsdraft.engine.state import DraftState
 from bsdraft.engine.stats import DraftStats
 from bsdraft.models.serve import WinProbModel
 
+logger = logging.getLogger("bsdraft.api")
+
 _engine: Optional[DraftEngine] = None
+_last_check: float = 0.0   # epoch of the last sync attempt (liveness)
+_last_change: float = 0.0  # epoch of the last actual data change
+
+
+async def _refresh_loop() -> None:
+    """Periodically re-sync the dataset and hot-swap rebuilt stats into the live engine."""
+    global _last_check, _last_change
+    loop = asyncio.get_running_loop()
+    while True:
+        await asyncio.sleep(settings.refresh_seconds)
+        try:
+            changed = await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
+            _last_check = time.time()
+            if changed and _engine is not None:
+                new_stats = await loop.run_in_executor(None, DraftStats)
+                _engine.stats = new_stats  # atomic reference swap — readers see old or new, never partial
+                _last_change = time.time()
+                logger.info("draft stats refreshed: %d matches", new_stats.n)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — a refresh hiccup must not kill the loop
+            logger.warning("refresh loop error: %s", e)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine
+    global _engine, _last_check, _last_change
+    loop = asyncio.get_running_loop()
+    if settings.data_url:
+        await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
+        _last_check = _last_change = time.time()
     _engine = DraftEngine(DraftStats(), WinProbModel())
     if settings.player_tag:
         try:
@@ -38,7 +72,18 @@ async def lifespan(app: FastAPI):
                 _engine.roster, _engine.roster_name = await mastery.fetch_roster(client, settings.player_tag)
         except Exception:
             _engine.roster, _engine.roster_name = None, ""
-    yield
+    task = None
+    if settings.data_url and settings.refresh_seconds > 0:
+        task = asyncio.create_task(_refresh_loop())
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="Brawl Stars Draft Tool", version="0.1.0", lifespan=lifespan)
@@ -52,6 +97,9 @@ def health():
         "model": bool(_engine and _engine.model and _engine.model.available),
         "matches": _engine.stats.n if _engine else 0,
         "roster": bool(_engine and _engine.roster),
+        "refresh_seconds": settings.refresh_seconds if settings.data_url else 0,
+        "last_check": _last_check or None,
+        "last_change": _last_change or None,
     }
 
 

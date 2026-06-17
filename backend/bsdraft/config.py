@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     crawl_seed_countries: str = "global,US,DE,KR,BR,JP"
     crawl_ranked_only: bool = True
 
+    # Cloud serving / live refresh
+    # URL of the published matches dataset (GitHub Release asset, gzipped). When set, the API
+    # syncs it at startup and every `refresh_seconds`, rebuilding draft stats with no restart.
+    data_url: str = ""
+    refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
+
     @property
     def seed_countries(self):
         return [c.strip() for c in self.crawl_seed_countries.split(",") if c.strip()]

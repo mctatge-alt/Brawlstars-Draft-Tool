@@ -33,6 +33,8 @@ class Dataset:
 
 def iter_matches(path: Optional[Path] = None) -> Iterator[dict]:
     path = path or (RAW_DIR / "matches.jsonl")
+    if not Path(path).exists():
+        return  # no data yet (e.g. cloud cold start before the first sync) -> empty iterator
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()

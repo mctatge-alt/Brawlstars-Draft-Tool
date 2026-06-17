@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Sample launchd agent: run the crawler loop on login and keep it alive (macOS).
+
+  1. Replace every /ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool below with your repo's real path.
+  2. cp deploy/com.bsdraft.crawler.plist ~/Library/LaunchAgents/com.bsdraft.crawler.plist
+  3. launchctl load ~/Library/LaunchAgents/com.bsdraft.crawler.plist     # start
+     launchctl unload ~/Library/LaunchAgents/com.bsdraft.crawler.plist   # stop
+
+  The crawler uses your IP-locked Supercell key (from .env) and publishes matches.jsonl.gz
+  to the GitHub Release the deployed API pulls from. Logs go to data/raw/crawl.{out,err}.log.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bsdraft.crawler</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/.venv/bin/python</string>
+    <string>backend/scripts/collect.py</string>
+    <string>--loop</string>
+    <string>3600</string>
+    <string>--target</string>
+    <string>800</string>
+    <string>--publish</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>backend</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/data/raw/crawl.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/data/raw/crawl.err.log</string>
+</dict>
+</plist>
