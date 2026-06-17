@@ -49,3 +49,6 @@ frontend/.env*
 .obsidian/
 .smart-env/
 *.base
+
+# --- Personal vault notes (keep out of the public repo) ---
+/Notes/
