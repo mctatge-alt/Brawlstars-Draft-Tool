@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan,
   getReference, getRoster, recommend,
@@ -14,30 +14,68 @@ const SEV_COLOR: Record<string, string> = { critical: "#e0566f", warn: "#e8c34a"
 
 type Zone = "ban" | "our" | "their";
 type Slot = { zone: Zone; index: number };
+type Step =
+  | { kind: "ban"; slot: Slot; index: number }
+  | { kind: "pick"; side: "us" | "them"; slot: Slot; n: number }
+  | { kind: "done" };
 
 const BAN_N = 6, TEAM_N = 3;
+const PICK_ORDER = [0, 1, 1, 0, 0, 1]; // 1-2-2-1 snake; 0 = first-pick team
 const pct = (x: number) => `${Math.round(x * 100)}%`;
+
+function pickSlotSequence(wePickFirst: boolean): { side: "us" | "them"; zone: Zone; index: number }[] {
+  const seq: { side: "us" | "them"; zone: Zone; index: number }[] = [];
+  const counts = { us: 0, them: 0 };
+  for (const team of PICK_ORDER) {
+    const side: "us" | "them" = (team === 0) === wePickFirst ? "us" : "them";
+    const zone: Zone = side === "us" ? "our" : "their";
+    seq.push({ side, zone, index: counts[side] });
+    counts[side]++;
+  }
+  return seq;
+}
 
 function Bar({ label, value }: { label: string; value: number }) {
   const w = Math.max(2, Math.min(100, (value - 0.35) / 0.30 * 100));
-  const good = value >= 0.5;
   return (
     <div className="flex items-center gap-2 text-[11px]">
       <span className="w-14 text-right text-[var(--muted)] capitalize">{label}</span>
       <div className="flex-1 h-1.5 rounded bg-[#0c1119] overflow-hidden">
-        <div className="h-full rounded" style={{ width: `${w}%`, background: good ? "#3ec46d" : "#e0566f" }} />
+        <div className="h-full rounded" style={{ width: `${w}%`, background: value >= 0.5 ? "#3ec46d" : "#e0566f" }} />
       </div>
       <span className="w-9 tabular-nums text-[var(--muted)]">{value.toFixed(2)}</span>
     </div>
   );
 }
 
-function Avatar({ b, size = 56, dim }: { b?: Brawler; size?: number; dim?: boolean }) {
-  if (!b) return <div style={{ width: size, height: size }} className="rounded-lg bg-[#0c1119] border border-[var(--border)]" />;
+function Avatar({ b, size = 56, dim, ring }: { b?: Brawler; size?: number; dim?: boolean; ring?: string }) {
+  const border = ring || (b ? CLASS_COLOR[b.cls] || "#26303f" : "#26303f");
+  if (!b) return <div style={{ width: size, height: size, borderColor: border }} className="rounded-lg bg-[#0c1119] border" />;
   return (
     <img src={b.image_url} alt={b.name} title={b.name} width={size} height={size}
-      className="rounded-lg object-cover border border-[var(--border)]"
-      style={{ width: size, height: size, opacity: dim ? 0.3 : 1, borderColor: CLASS_COLOR[b.cls] || "#26303f" }} />
+      className="rounded-lg object-cover border"
+      style={{ width: size, height: size, opacity: dim ? 0.3 : 1, borderColor: border }} />
+  );
+}
+
+function StatusBanner({ step }: { step: Step }) {
+  const cfg =
+    step.kind === "ban"
+      ? { color: "#e0566f", icon: "🚫", text: `Ban phase — ban ${step.index} of ${BAN_N}`, sub: "Tap a brawler to ban it" }
+      : step.kind === "done"
+      ? { color: "#3ec46d", icon: "✓", text: "Draft complete", sub: "Your game plan is below" }
+      : step.side === "us"
+      ? { color: "#3b82f6", icon: "🔵", text: "Your pick", sub: "Tap a recommendation, or any brawler" }
+      : { color: "#e0566f", icon: "🔴", text: "Enemy's pick", sub: "Tap the brawler they chose" };
+  return (
+    <div className="rounded-lg px-4 py-2.5 mb-4 flex items-center gap-3"
+      style={{ background: cfg.color + "18", border: `1px solid ${cfg.color}55` }}>
+      <span className="text-lg">{cfg.icon}</span>
+      <div>
+        <div className="font-semibold text-sm" style={{ color: cfg.color }}>{cfg.text}</div>
+        <div className="text-xs text-[var(--muted)]">{cfg.sub}</div>
+      </div>
+    </div>
   );
 }
 
@@ -48,10 +86,9 @@ export default function DraftBoard() {
   const [bans, setBans] = useState<(number | null)[]>(Array(BAN_N).fill(null));
   const [our, setOur] = useState<(number | null)[]>(Array(TEAM_N).fill(null));
   const [their, setTheir] = useState<(number | null)[]>(Array(TEAM_N).fill(null));
-  const [active, setActive] = useState<Slot | null>(null);
   const [wePickFirst, setWePickFirst] = useState(true);
+  const [withBans, setWithBans] = useState(true);
   const [solo, setSolo] = useState(true);
-  const [phase, setPhase] = useState<"ban" | "pick">("pick");
   const [recs, setRecs] = useState<RecommendResponse | null>(null);
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [query, setQuery] = useState("");
@@ -83,6 +120,22 @@ export default function DraftBoard() {
   const ownedSet = useMemo(() => new Set((roster?.owned || []).map((o) => o.id)), [roster]);
   const personalizeReady = !!roster?.loaded;
 
+  // --- guided draft sequence: ban×6 → 1-2-2-1 snake; current step = first empty in order ---
+  const pickSeq = useMemo(() => pickSlotSequence(wePickFirst), [wePickFirst]);
+  const step: Step = useMemo(() => {
+    if (withBans) {
+      const bi = bans.findIndex((x) => x == null);
+      if (bi >= 0) return { kind: "ban", slot: { zone: "ban", index: bi }, index: bi + 1 };
+    }
+    for (let i = 0; i < pickSeq.length; i++) {
+      const s = pickSeq[i];
+      const arr = s.side === "us" ? our : their;
+      if (arr[s.index] == null) return { kind: "pick", side: s.side, slot: { zone: s.zone, index: s.index }, n: BAN_N + i + 1 };
+    }
+    return { kind: "done" };
+  }, [withBans, bans, our, their, pickSeq]);
+  const phase: "ban" | "pick" = step.kind === "ban" ? "ban" : "pick";
+
   useEffect(() => {
     if (!mapId || !mode) return;
     const body = {
@@ -110,26 +163,16 @@ export default function DraftBoard() {
     else setTheir(apply);
   };
 
-  const firstEmpty = (arr: (number | null)[]) => arr.findIndex((x) => x == null);
-  const defaultTarget = useCallback((): Slot | null => {
-    if (phase === "ban") { const i = firstEmpty(bans); if (i >= 0) return { zone: "ban", index: i }; }
-    const o = firstEmpty(our); if (o >= 0) return { zone: "our", index: o };
-    const t = firstEmpty(their); if (t >= 0) return { zone: "their", index: t };
-    const b = firstEmpty(bans); if (b >= 0) return { zone: "ban", index: b };
-    return null;
-  }, [phase, bans, our, their]);
-
+  // tap a brawler → fill the current step's slot and auto-advance
   const place = (bid: number) => {
-    if (used.has(bid)) return;
-    const slot = active ?? defaultTarget();
-    if (!slot) return;
-    setZone(slot.zone, slot.index, bid);
-    setActive(null);
+    if (used.has(bid) || step.kind === "done") return;
+    setZone(step.slot.zone, step.slot.index, bid);
   };
 
   const reset = () => {
-    setBans(Array(BAN_N).fill(null)); setOur(Array(TEAM_N).fill(null));
-    setTheir(Array(TEAM_N).fill(null)); setActive(null); setPhase("pick");
+    setBans(Array(BAN_N).fill(null));
+    setOur(Array(TEAM_N).fill(null));
+    setTheir(Array(TEAM_N).fill(null));
   };
 
   const filtered = useMemo(() => {
@@ -145,23 +188,34 @@ export default function DraftBoard() {
     [ref]
   );
 
+  const isCurrent = (zone: Zone, index: number) =>
+    step.kind !== "done" && step.slot.zone === zone && step.slot.index === index;
+
   const SlotBox = ({ zone, index, accent }: { zone: Zone; index: number; accent: string }) => {
     const arr = zone === "ban" ? bans : zone === "our" ? our : their;
     const bid = arr[index];
     const b = bid != null ? byId.get(bid) : undefined;
-    const isActive = active?.zone === zone && active?.index === index;
+    const current = isCurrent(zone, index);
     return (
       <button
-        onClick={() => (bid != null ? setZone(zone, index, null) : setActive(isActive ? null : { zone, index }))}
+        onClick={() => bid != null && setZone(zone, index, null)}
         className="relative rounded-lg transition"
-        style={{ outline: isActive ? `2px solid ${accent}` : "none", outlineOffset: 2 }}
-        title={b ? `${b.name} — click to remove` : "click, then choose a brawler"}
+        style={{ boxShadow: current ? `0 0 0 2px ${accent}, 0 0 12px ${accent}88` : "none" }}
+        title={b ? `${b.name} — tap to remove` : current ? "next slot — tap a brawler" : ""}
       >
-        <Avatar b={b} size={zone === "ban" ? 44 : 60} dim={zone === "ban"} />
-        {bid == null && <span className="absolute inset-0 grid place-items-center text-[var(--muted)] text-lg">+</span>}
+        <Avatar b={b} size={zone === "ban" ? 44 : 60} dim={zone === "ban"} ring={current ? accent : undefined} />
+        {bid == null && (
+          <span className="absolute inset-0 grid place-items-center text-lg" style={{ color: current ? accent : "var(--muted)" }}>+</span>
+        )}
       </button>
     );
   };
+
+  const recTitle =
+    step.kind === "ban" ? "Ban suggestions"
+    : step.kind === "done" ? "Draft complete"
+    : step.side === "us" ? "Your pick — suggestions"
+    : "Strong picks here";
 
   return (
     <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
@@ -176,18 +230,14 @@ export default function DraftBoard() {
             <option key={m.id} value={m.id}>{m.mode} — {m.name}</option>
           ))}
         </select>
-        <div className="flex rounded-md overflow-hidden border border-[var(--border)] text-sm">
-          {(["ban", "pick"] as const).map((p) => (
-            <button key={p} onClick={() => setPhase(p)}
-              className="px-3 py-1.5 capitalize"
-              style={{ background: phase === p ? "var(--accent)" : "transparent", color: phase === p ? "#fff" : "var(--muted)" }}>
-              {p}
-            </button>
-          ))}
-        </div>
         <button onClick={() => setWePickFirst((v) => !v)}
           className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)]">
-          {wePickFirst ? "We pick 1st" : "Enemy picks 1st"}
+          {wePickFirst ? "You pick 1st" : "Enemy picks 1st"}
+        </button>
+        <button onClick={() => setWithBans((v) => !v)}
+          className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)]"
+          title="Toggle the ban phase">
+          {withBans ? "Bans: on" : "Bans: off"}
         </button>
         <button onClick={() => setSolo((v) => !v)}
           className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)]">
@@ -196,7 +246,7 @@ export default function DraftBoard() {
         <button onClick={() => setUseSearch((v) => !v)}
           className="text-sm px-3 py-1.5 rounded-md border bg-[var(--panel2)]"
           style={{ borderColor: useSearch ? "#3ec46d" : "var(--border)", color: useSearch ? "#3ec46d" : "var(--muted)" }}
-          title="Seat-aware minimax lookahead over the remaining 1-2-2-1 snake">
+          title="Seat-aware minimax lookahead over the remaining snake">
           🔮 Deep search {useSearch ? "on" : "off"}
         </button>
         <button onClick={() => personalizeReady && setPersonalize((v) => !v)}
@@ -213,6 +263,8 @@ export default function DraftBoard() {
 
       {err && <div className="mb-4 text-sm text-[#e0566f]">API error: {err}. Is the backend running on :8000?</div>}
 
+      <StatusBanner step={step} />
+
       <div className="grid lg:grid-cols-[1fr_360px] gap-5">
         {/* LEFT: board + picker */}
         <div>
@@ -226,10 +278,14 @@ export default function DraftBoard() {
                 </div>
               </div>
             )}
-            <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Bans</div>
-            <div className="flex gap-2 mb-4">
-              {bans.map((_, i) => <SlotBox key={i} zone="ban" index={i} accent="#e0566f" />)}
-            </div>
+            {withBans && (
+              <>
+                <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Bans</div>
+                <div className="flex gap-2 mb-4">
+                  {bans.map((_, i) => <SlotBox key={i} zone="ban" index={i} accent="#e0566f" />)}
+                </div>
+              </>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color: "#5aa0ff" }}>Your team</div>
@@ -257,16 +313,14 @@ export default function DraftBoard() {
             <div className="flex items-center gap-2 mb-3">
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search brawlers…"
                 className="flex-1 bg-[var(--panel2)] border border-[var(--border)] rounded-md px-3 py-2 text-sm" />
-              {personalize && personalizeReady && (
-                <span className="text-xs text-[#e8c34a] whitespace-nowrap">owned only</span>
-              )}
+              {personalize && personalizeReady && <span className="text-xs text-[#e8c34a] whitespace-nowrap">owned only</span>}
             </div>
             <div className="grid grid-cols-6 sm:grid-cols-8 gap-2 max-h-[340px] overflow-y-auto pr-1">
               {filtered.map((b) => {
                 const isUsed = used.has(b.id);
                 const unowned = personalize && personalizeReady && !ownedSet.has(b.id);
                 return (
-                  <button key={b.id} onClick={() => place(b.id)} disabled={isUsed || unowned}
+                  <button key={b.id} onClick={() => place(b.id)} disabled={isUsed || unowned || step.kind === "done"}
                     className="flex flex-col items-center gap-1 group"
                     title={unowned ? `${b.name} — not owned` : `${b.name} (${b.cls})`}>
                     <Avatar b={b} size={48} dim={isUsed || unowned} />
@@ -283,14 +337,9 @@ export default function DraftBoard() {
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 h-fit lg:sticky lg:top-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold">
-              {phase === "ban" ? "Ban suggestions" : "Pick suggestions"}
+              {recTitle}
               {loading && <span className="text-xs text-[var(--muted)] font-normal ml-2">analyzing…</span>}
             </h2>
-            {recs?.next_to_act && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--panel2)] text-[var(--muted)]">
-                turn: {recs.next_to_act === "us" ? "you" : "enemy"}
-              </span>
-            )}
           </div>
 
           {warnings.length > 0 && (
@@ -305,9 +354,11 @@ export default function DraftBoard() {
           )}
 
           <div className="space-y-2">
-            {phase === "ban"
-              ? (recs?.bans || []).map((r, i) => <BanCard key={r.brawler_id} r={r} i={i} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)
-              : (recs?.picks || []).map((r, i) => <PickCard key={r.brawler_id} r={r} i={i} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
+            {step.kind === "done" && <div className="text-sm text-[var(--muted)]">✓ Draft set — see your game plan below.</div>}
+            {step.kind !== "done" && phase === "ban" &&
+              (recs?.bans || []).map((r, i) => <BanCard key={r.brawler_id} r={r} i={i} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
+            {step.kind !== "done" && phase === "pick" &&
+              (recs?.picks || []).map((r, i) => <PickCard key={r.brawler_id} r={r} i={i} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
             {!recs && <div className="text-sm text-[var(--muted)]">Loading…</div>}
           </div>
         </div>
