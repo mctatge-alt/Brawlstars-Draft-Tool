@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan,
-  getReference, getRoster, recommend,
+  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health,
+  getReference, getRoster, recommend, getHealth,
 } from "@/lib/api";
 
 const CLASS_COLOR: Record<string, string> = {
@@ -82,6 +82,7 @@ function StatusBanner({ step }: { step: Step }) {
 export default function DraftBoard() {
   const [ref, setRef] = useState<Reference | null>(null);
   const [roster, setRoster] = useState<RosterResponse | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const [mapId, setMapId] = useState<number | null>(null);
   const [bans, setBans] = useState<(number | null)[]>(Array(BAN_N).fill(null));
   const [our, setOur] = useState<(number | null)[]>(Array(TEAM_N).fill(null));
@@ -104,6 +105,7 @@ export default function DraftBoard() {
       if (best) setMapId(best.id);
     }).catch((e) => setErr(String(e)));
     getRoster().then(setRoster).catch(() => {});
+    getHealth().then(setHealth).catch(() => {});
   }, []);
 
   const byId = useMemo(() => {
@@ -256,7 +258,11 @@ export default function DraftBoard() {
           title={personalizeReady ? `Personalize to ${roster?.name}'s roster & mastery` : "no roster loaded"}>
           👤 {personalize && roster?.name ? roster.name : "Personalize"}{personalizeReady ? (personalize ? " ✓" : "") : " —"}
         </button>
-        <button onClick={reset} className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] text-[var(--muted)] ml-auto">
+        <span className="ml-auto text-xs text-[var(--muted)] flex items-center gap-1"
+          title="Ranked matches in the live dataset — auto-refreshes every few minutes">
+          {health != null && <>📊 <span className="tabular-nums">{health.matches.toLocaleString()}</span> matches analyzed</>}
+        </span>
+        <button onClick={reset} className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] text-[var(--muted)]">
           Reset
         </button>
       </header>

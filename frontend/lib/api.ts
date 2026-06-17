@@ -33,6 +33,11 @@ export type RosterResponse = {
   loaded: boolean; tag: string; name: string; owned: OwnedBrawler[]; error?: string | null;
 };
 
+export type Health = {
+  status: string; model: boolean; matches: number; roster: boolean;
+  refresh_seconds: number; last_check: number | null; last_change: number | null;
+};
+
 export type RecommendBody = {
   map_id: number; mode: string; our_team: number[]; their_team: number[]; bans: number[];
   we_pick_first: boolean; solo_queue: boolean; phase: "pick" | "ban";
@@ -44,6 +49,12 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 export async function getReference(): Promise<Reference> {
   const res = await fetch(`${API_BASE}/api/reference`);
   if (!res.ok) throw new Error(`reference: ${res.status}`);
+  return res.json();
+}
+
+export async function getHealth(): Promise<Health> {
+  const res = await fetch(`${API_BASE}/api/health`);
+  if (!res.ok) throw new Error(`health: ${res.status}`);
   return res.json();
 }
 
