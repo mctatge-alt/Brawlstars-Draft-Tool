@@ -332,16 +332,27 @@ export default function DraftBoard() {
     return () => clearTimeout(t);
   }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, bracket, personalTag]);
 
-  // "Full-loadout" rail: strongest brawlers on this map in a vacuum (empty board, no roster).
-  // Independent of the live draft and personalization, so it only refetches on map/bracket.
+  // "Full-loadout" rail: strongest picks for the current board with no roster — the pure
+  // population meta. It re-ranks as the draft fills in (used brawlers drop out, synergy/
+  // counters fold in), so it tracks the same board state as the recommendations but never
+  // personalizes. Debounced like recommend to coalesce rapid board changes.
   useEffect(() => {
     if (!mapId || !mode) return;
+    const body = {
+      map_id: mapId, mode,
+      our_team: our.filter((x): x is number => x != null),
+      their_team: their.filter((x): x is number => x != null),
+      bans: bans.filter((x): x is number => x != null),
+      rank_bracket: bracket, top: 10,
+    };
     let cancelled = false;
-    getTopPicks(mapId, mode, bracket)
-      .then((r) => { if (!cancelled) { setTopPicks(r.picks); setRailOk(true); } })
-      .catch(() => { if (!cancelled) setRailOk(false); });
-    return () => { cancelled = true; };
-  }, [mapId, mode, bracket]);
+    const t = setTimeout(() => {
+      getTopPicks(body)
+        .then((r) => { if (!cancelled) { setTopPicks(r.picks); setRailOk(true); } })
+        .catch(() => { if (!cancelled) setRailOk(false); });
+    }, 120);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [mapId, mode, our, their, bans, bracket]);
 
   const setZone = (zone: Zone, idx: number, val: number | null) => {
     const apply = (arr: (number | null)[]) => arr.map((x, i) => (i === idx ? val : x));
@@ -698,9 +709,10 @@ function TopPicksRail({ picks, byId, used, onPick, disabled }: {
   onPick: (id: number) => void; disabled: boolean;
 }) {
   const blurb =
-    "The strongest brawlers on this map if you owned every brawler at a full loadout — " +
-    "all gadgets, gears & star powers. A general meta tier list, independent of the live " +
-    "draft and your roster.";
+    "The strongest picks right now if you owned every brawler at a full loadout — all " +
+    "gadgets, gears & star powers. Updates as the draft fills in (used brawlers drop out, " +
+    "synergy & counters fold in), but ignores your roster — the pure meta, not your " +
+    "personalized list.";
   return (
     <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-2 h-fit lg:sticky lg:top-4 anim-fade-up"
       style={{ animationDelay: "300ms" }}>

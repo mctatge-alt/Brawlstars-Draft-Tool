@@ -91,6 +91,19 @@ class RecommendResponse(BaseModel):
     next_to_act: Optional[str] = None
 
 
+class TopPicksRequest(BaseModel):
+    """Current board for the full-loadout rail. No roster/personalize fields — the rail is
+    deliberately the population meta (every brawler at a full loadout), so it never depends
+    on what the player owns."""
+    map_id: int
+    mode: str
+    our_team: List[int] = []
+    their_team: List[int] = []
+    bans: List[int] = []
+    rank_bracket: Optional[str] = None
+    top: int = 10
+
+
 class TopPick(BaseModel):
     brawler_id: int
     name: str
@@ -100,7 +113,8 @@ class TopPick(BaseModel):
 
 
 class TopPicksResponse(BaseModel):
-    """Strongest brawlers on a map in a vacuum (empty board, full loadout, no roster)."""
+    """Strongest picks for the current board at a full loadout, with no roster — re-ranks as
+    the draft fills in (used brawlers drop out, synergy/counters fold in)."""
     map_id: int
     mode: str
     rank_bracket: Optional[str] = None

@@ -254,17 +254,22 @@ async def rank(tag: str):
                               error="not in our data, and live lookup isn't available here")
 
 
-@app.get("/api/top_picks", response_model=S.TopPicksResponse)
-def top_picks(map_id: int, mode: str, rank_bracket: Optional[str] = None, top: int = 10):
-    """The strongest brawlers on this map *in a vacuum* — an empty board, no roster, so every
-    brawler is judged at a full loadout (all gadgets, gears & star powers) and nothing is
-    filtered out by ownership or mastery. Ranked by the engine's first-pick score; stable
-    across a draft, so the frontend fetches it once per map/bracket as a constant 'who's
-    generally strong here' rail alongside the live, personalized recommendations."""
-    state = DraftState(map_id=map_id, mode=mode, we_pick_first=True, rank_bracket=rank_bracket)
-    picks = _engine.recommend_picks(state, top=top, roster=None)
+@app.post("/api/top_picks", response_model=S.TopPicksResponse)
+def top_picks(req: S.TopPicksRequest):
+    """The strongest picks for the *current board*, with every brawler judged at a full
+    loadout (all gadgets, gears & star powers) and **no roster** — so nothing is filtered by
+    ownership or mastery. It re-ranks as the draft fills in: brawlers already picked/banned
+    drop out, and synergy with your team / counters to theirs fold into the score. This is
+    the pure population meta ('who's strongest here right now'), the deliberate counterpart
+    to /api/recommend, which personalizes to the player's roster & history."""
+    state = DraftState(
+        map_id=req.map_id, mode=req.mode,
+        our_team=list(req.our_team), their_team=list(req.their_team), bans=list(req.bans),
+        rank_bracket=req.rank_bracket,
+    )
+    picks = _engine.recommend_picks(state, top=req.top, roster=None)  # roster=None ⇒ full loadout
     return S.TopPicksResponse(
-        map_id=map_id, mode=mode, rank_bracket=rank_bracket,
+        map_id=req.map_id, mode=req.mode, rank_bracket=req.rank_bracket,
         picks=[
             S.TopPick(brawler_id=p.brawler_id, name=p.name, cls=p.cls,
                       score=round(p.score, 4), map_winrate=round(p.map_winrate, 4))

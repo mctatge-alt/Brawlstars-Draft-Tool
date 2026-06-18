@@ -56,6 +56,10 @@ export type Meta = {
 export type TopPick = {
   brawler_id: number; name: string; cls: string; score: number; map_winrate: number;
 };
+export type TopPicksBody = {
+  map_id: number; mode: string; our_team: number[]; their_team: number[]; bans: number[];
+  rank_bracket?: string | null; top: number;
+};
 export type TopPicksResponse = {
   map_id: number; mode: string; rank_bracket: string | null; picks: TopPick[];
 };
@@ -98,12 +102,12 @@ export async function getRoster(): Promise<RosterResponse> {
   return res.json();
 }
 
-export async function getTopPicks(
-  mapId: number, mode: string, bracket?: string | null
-): Promise<TopPicksResponse> {
-  const qs = new URLSearchParams({ map_id: String(mapId), mode });
-  if (bracket) qs.set("rank_bracket", bracket);
-  const res = await fetch(`${API_BASE}/api/top_picks?${qs.toString()}`);
+export async function getTopPicks(body: TopPicksBody): Promise<TopPicksResponse> {
+  const res = await fetch(`${API_BASE}/api/top_picks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`top_picks: ${res.status}`);
   return res.json();
 }
