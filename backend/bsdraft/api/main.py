@@ -2,10 +2,11 @@
 
     PYTHONPATH=backend uvicorn bsdraft.api.main:app --reload --port 8000
 
-Loads the engine (empirical stats + trained model) at startup. When DATA_URL is set, it
-also syncs the published matches dataset and rebuilds stats every REFRESH_SECONDS, so the
-live site stays current with no restart. Loads the player's roster (mastery
-personalization) if PLAYER_TAG is set — a local-only feature (needs the IP-locked key).
+Loads the engine (empirical stats + trained model) at startup. When DATA_URL / MODEL_URL are
+set, it also syncs the published dataset and model every REFRESH_SECONDS — rebuilding stats
+and hot-swapping the model — so the live site stays current with no restart. Loads the
+player's roster (mastery personalization) if PLAYER_TAG is set — a local-only feature (needs
+the IP-locked key).
 """
 from __future__ import annotations
 
@@ -59,7 +60,8 @@ def _rank_index():
 
 
 async def _refresh_loop() -> None:
-    """Periodically re-sync the dataset and hot-swap rebuilt stats into the live engine."""
+    """Periodically re-sync the dataset (and model) and hot-swap rebuilt stats / a reloaded
+    model into the live engine, so a fresh crawl or retrain rolls out with no restart."""
     global _last_check, _last_change
     loop = asyncio.get_running_loop()
     while True:
@@ -72,6 +74,10 @@ async def _refresh_loop() -> None:
                 _engine.stats, _engine.bracket_stats = g, br  # swap in rebuilt tables
                 _last_change = time.time()
                 logger.info("draft stats refreshed: %d matches, %d bracket(s)", g.n, len(br))
+            if settings.model_url and _engine is not None:
+                if await loop.run_in_executor(None, sync.sync_model, settings.model_url):
+                    _engine.model = await loop.run_in_executor(None, WinProbModel)  # atomic swap
+                    logger.info("win-prob model hot-swapped (available=%s)", _engine.model.available)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — a refresh hiccup must not kill the loop
@@ -85,6 +91,8 @@ async def lifespan(app: FastAPI):
     if settings.data_url:
         await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
         _last_check = _last_change = time.time()
+    if settings.model_url:
+        await loop.run_in_executor(None, sync.sync_model, settings.model_url)
     g, br = _build_stats()
     _engine = DraftEngine(g, WinProbModel(), bracket_stats=br)
     if settings.player_tag:
@@ -94,7 +102,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             _engine.roster, _engine.roster_name = None, ""
     task = None
-    if settings.data_url and settings.refresh_seconds > 0:
+    if (settings.data_url or settings.model_url) and settings.refresh_seconds > 0:
         task = asyncio.create_task(_refresh_loop())
     try:
         yield

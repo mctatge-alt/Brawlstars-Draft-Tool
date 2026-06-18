@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # URL of the published matches dataset (GitHub Release asset, gzipped). When set, the API
     # syncs it at startup and every `refresh_seconds`, rebuilding draft stats with no restart.
     data_url: str = ""
+    # URL of the published win-prob model (winprob.npz Release asset). When set, the API syncs
+    # it alongside the dataset and hot-swaps the reloaded model in without a restart — so a
+    # retrain (e.g. after a balance shift) rolls out live instead of waiting for a redeploy.
+    model_url: str = ""
     refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
 
     # Engine tuning

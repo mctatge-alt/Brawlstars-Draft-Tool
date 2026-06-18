@@ -70,17 +70,24 @@ def _check_meta(retrain_on_shift: bool) -> None:
 
 
 def _retrain() -> None:
-    """Retrain and re-export the win-prob model so it reflects the shifted meta (re-publish
-    afterwards to roll it out). Guarded so a failure can't take down the crawl loop."""
+    """Retrain, re-export, and publish the win-prob model so it reflects the shifted meta. The
+    deployed API (with MODEL_URL set) hot-swaps the published model on its next refresh — no
+    redeploy. Guarded so a failure can't take down the crawl loop."""
     print("meta shifted -> retraining win-prob model …")
     scripts = REPO_ROOT / "backend" / "scripts"
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "backend")}
     try:
         subprocess.run([sys.executable, str(scripts / "train.py")], check=True, env=env)
         subprocess.run([sys.executable, str(scripts / "export_model.py")], check=True, env=env)
-        print("retrain complete — re-run with --publish (or republish) to roll out the new model")
     except Exception as e:  # noqa: BLE001
         print(f"retrain failed: {e}")
+        return
+    try:
+        publisher.publish_model()
+        print("retrain complete — new model published; the live API hot-swaps it on its next refresh")
+    except Exception as e:  # noqa: BLE001 — export succeeded; publishing is best-effort
+        print(f"retrain complete, but model publish failed ({e}); "
+              f"roll out manually: python -m bsdraft.collect.publish --only-model")
 
 
 async def _loop(target: int, countries: list, interval: int, do_publish: bool,
