@@ -4,6 +4,10 @@ A compact neural model that predicts the probability that team A beats team B in
 Stars *Ranked* 3v3 match, given both teams' brawlers and the map. It is the core signal
 behind the draft assistant's pick/ban recommendations.
 
+> **See also:** [model-evaluation.md](model-evaluation.md) — how this model is weighted
+> against the empirical signals in the pick blend, and an ablation testing whether that
+> weighting should depend on the map/mode (it shouldn't).
+
 ## Intended use
 
 - **Primary:** rank candidate picks/bans by their marginal effect on win-probability during a
