@@ -30,14 +30,17 @@ from bsdraft.constants import REPO_ROOT
 from bsdraft.engine.drift import detect_drift
 
 
-async def _run(target: int, countries: list) -> int:
+async def _run(target: int, countries: list, revisit_after: float) -> int:
     async with BrawlStarsClient() as client:
-        crawler = Crawler(client)
+        crawler = Crawler(client, revisit_after=revisit_after)
         seeds = [settings.player_tag] if settings.player_tag else []
-        n_seed = await crawler.seed(countries, seed_tags=seeds)
-        print(f"Seeded {n_seed} tags from rankings ({', '.join(countries)}).")
-        print(f"Resuming with {len(crawler.seen_matches)} matches, "
-              f"{len(crawler.visited)} players already visited.")
+        backlog = len(crawler.frontier)  # players recovered from prior state, before seeding
+        await crawler.seed(countries, seed_tags=seeds)
+        queued = len(crawler.frontier)
+        print(f"Resuming: {len(crawler.seen_matches)} matches, "
+              f"{len(crawler.visited)} players scanned.")
+        print(f"Queued {queued} players to scan ({backlog} recovered backlog + "
+              f"{queued - backlog} new from rankings ({', '.join(countries)})).")
         new = await crawler.run(target_matches=target)
         print(f"\nDone. +{new} new matches  ->  {MATCHES_PATH}")
         print(f"Total unique matches: {len(crawler.seen_matches)}")
@@ -81,12 +84,12 @@ def _retrain() -> None:
 
 
 async def _loop(target: int, countries: list, interval: int, do_publish: bool,
-                meta_check: bool, retrain_on_shift: bool) -> None:
+                meta_check: bool, retrain_on_shift: bool, revisit_after: float) -> None:
     cycle = 0
     while True:
         cycle += 1
         print(f"\n=== crawl cycle {cycle} ===")
-        await _run(target, countries)
+        await _run(target, countries, revisit_after)
         if do_publish:
             _try_publish()
         if meta_check:
@@ -108,10 +111,15 @@ def main() -> None:
                     help="skip the meta-drift report after each crawl (on by default)")
     ap.add_argument("--retrain-on-shift", action="store_true",
                     help="when the meta-drift check trips, retrain + re-export the win-prob model")
+    ap.add_argument("--revisit-hours", type=float, default=None,
+                    help="re-scan a known player after this many hours to catch their newer "
+                         "ranked games (default: .env CRAWL_REVISIT_HOURS; 0 disables)")
     ap.set_defaults(meta_check=True)
     args = ap.parse_args()
     raw = args.countries.split(",") if args.countries else settings.seed_countries
     countries = [c.strip() for c in raw if c.strip()]
+    revisit_hours = args.revisit_hours if args.revisit_hours is not None else settings.crawl_revisit_hours
+    revisit_after = max(0.0, revisit_hours) * 3600
 
     if args.loop > 0 and not args.publish:
         print("note: --loop without --publish — crawling locally only; the live site won't update.")
@@ -119,9 +127,9 @@ def main() -> None:
     try:
         if args.loop > 0:
             asyncio.run(_loop(args.target, countries, args.loop, args.publish,
-                              args.meta_check, args.retrain_on_shift))
+                              args.meta_check, args.retrain_on_shift, revisit_after))
         else:
-            asyncio.run(_run(args.target, countries))
+            asyncio.run(_run(args.target, countries, revisit_after))
             if args.publish:
                 _try_publish()
             if args.meta_check:

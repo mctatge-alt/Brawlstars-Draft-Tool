@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     crawl_rate_limit_per_sec: float = 5.0
     crawl_seed_countries: str = "global,US,DE,KR,BR,JP"
     crawl_ranked_only: bool = True
+    # Re-scan a known player once their last fetch is older than this many hours, to pick up
+    # ranked games played since (the API only exposes a player's last ~25 battles). 0 disables
+    # re-scanning — each player is fetched at most once.
+    crawl_revisit_hours: float = 12.0
 
     # Cloud serving / live refresh
     # URL of the published matches dataset (GitHub Release asset, gzipped). When set, the API
