@@ -23,6 +23,7 @@ stores it once per crawled participant) are de-duplicated by ``match_key``.
 from __future__ import annotations
 
 from collections import defaultdict
+from itertools import chain
 from typing import Dict, Iterable, List, Optional
 
 from bsdraft.collect.client import normalize_tag
@@ -142,8 +143,14 @@ def build_personal_stats(
     tag_n = normalize_tag(tag)
     if not tag_n:
         return None
-    rows = list(iter_matches())
+    # Stream the dataset lazily rather than materializing every match as a Python dict:
+    # PersonalStats iterates once and keeps only this player's (small) filtered subset, so a
+    # request-triggered build holds one player's games — not the whole dataset. This is what
+    # keeps /api/recommend?personal_tag=... from spiking memory under concurrent distinct tags
+    # (sync endpoints run in a threadpool, so each in-flight build would otherwise hold its
+    # own full copy) on the 512 MB free tier.
+    matches: Iterable[dict] = iter_matches()
     if extra_matches:
-        rows.extend(extra_matches)
-    ps = PersonalStats(tag_n, rows, fallback=fallback, halflife_days=halflife_days)
+        matches = chain(matches, extra_matches)
+    ps = PersonalStats(tag_n, matches, fallback=fallback, halflife_days=halflife_days)
     return ps if ps.n > 0 else None

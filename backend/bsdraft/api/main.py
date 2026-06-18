@@ -45,6 +45,7 @@ _meta_cache = None         # (data_version, MetaReport); recomputed lazily when 
 _rank_idx_cache = None     # (data_version, {tag: (ts, tier)}); recomputed lazily when data changes
 _personal_cache: dict = {} # tag -> (data_version, PersonalStats|None); rebuilt when data changes
 _roster_cache: dict = {}   # normalized tag -> (fetched_at, RosterResponse); short TTL spares the live API
+_ROSTER_CACHE_MAX = 256    # hard bound so distinct tags can't grow the cache without limit
 
 
 def _build_stats():
@@ -222,7 +223,17 @@ async def roster(tag: Optional[str] = None):
         _engine.roster, _engine.roster_name = r, name
         owned = [S.OwnedBrawler(id=bid, mastery=round(m.score, 3), gaps=m.gaps()) for bid, m in r.items()]
         resp = S.RosterResponse(loaded=True, tag=t, name=name, owned=owned)
-        _roster_cache[key] = (time.time(), resp)  # cache only successful loads; errors retry next poll
+        # Cache only successful loads; errors retry next poll. Evict stale/oldest entries so a
+        # stream of distinct tags can't grow this unbounded over the process lifetime (the TTL
+        # alone never removes anything — it's only checked on read).
+        now = time.time()
+        if len(_roster_cache) >= _ROSTER_CACHE_MAX:
+            for k in [k for k, (ts, _) in _roster_cache.items()
+                      if (now - ts) >= settings.roster_ttl_seconds]:
+                del _roster_cache[k]
+            if len(_roster_cache) >= _ROSTER_CACHE_MAX:  # all still fresh — drop the oldest
+                del _roster_cache[min(_roster_cache, key=lambda k: _roster_cache[k][0])]
+        _roster_cache[key] = (now, resp)
         return resp
     except Exception as e:  # noqa: BLE001
         return S.RosterResponse(loaded=False, tag=t, name="", error=str(e))
