@@ -39,28 +39,67 @@ for the newest brawlers that Brawlify has not yet class-tagged.
 ## Architecture
 
 A small PyTorch network (embedding dims 32 / 16 / 8; ~tens of thousands of parameters) with an
-**antisymmetric** head:
+**antisymmetric** head. Let $E_b \in \mathbb{R}^{32}$ be a learned brawler embedding, and let the
+map/mode **context** be the concatenation
 
-```
-logit = [ S(A, ctx) − S(B, ctx) ]      # context-conditioned team strength
-      + [ PA·QB − PB·QA ]               # low-rank antisymmetric counter term
+$$
+c = [\,e_{\text{map}},\ e_{\text{mode}}\,] \in \mathbb{R}^{16+8}.
+$$
 
-ctx        = [ map_emb, mode_emb ]
-S(team,ctx)= MLP( mean(brawler_emb(team)) ⊕ ctx )         # shared across both teams
-PA, QA     = Σ counter_p(team_a), Σ counter_q(team_a)     # low-rank "attacker/defender"
-```
+A single **strength** network scores either team in context — it is order-invariant because it reads
+the *mean* brawler embedding — and a pair of low-rank embeddings $p_b, q_b \in \mathbb{R}^{16}$ act as
+per-brawler "attacker" and "defender" vectors:
 
-**Why antisymmetric.** Swapping A and B negates the logit, so `P(A wins) + P(B wins) = 1`
-holds *by construction*. This bakes in a correct inductive bias (no team-order bias, no global
-offset), and makes data augmentation by team-swap unnecessary. The bilinear counter term
-encodes directed matchups (X beats Y) that an additive strength model cannot express, while
-remaining antisymmetric.
+$$
+S(T, c) = \mathrm{MLP}\!\Big(\big[\, \tfrac{1}{|T|}\sum_{b \in T} E_b,\ \ c \,\big]\Big),
+\qquad
+P_T = \sum_{b \in T} p_b,
+\qquad
+Q_T = \sum_{b \in T} q_b.
+$$
+
+The logit that team $A$ beats team $B$ adds a strength difference to a bilinear counter term, and the
+win probability is its sigmoid:
+
+$$
+\ell(A, B \mid c) = \underbrace{\big(S(A, c) - S(B, c)\big)}_{\text{team strength}}
+\;+\; \underbrace{\big(P_A \cdot Q_B - P_B \cdot Q_A\big)}_{\text{directed counters}},
+\qquad
+P(A \text{ wins} \mid c) = \sigma\!\big(\ell(A, B \mid c)\big).
+$$
+
+**Why antisymmetric.** Every term changes sign under the swap $A \leftrightarrow B$, so
+$\ell(B, A \mid c) = -\,\ell(A, B \mid c)$. Since $\sigma(-z) = 1 - \sigma(z)$,
+
+$$
+P(A \text{ wins} \mid c) + P(B \text{ wins} \mid c) = \sigma(z) + \sigma(-z) = 1
+$$
+
+holds *by construction*. This bakes in a correct inductive bias (no team-order bias, no global offset
+to learn) and makes team-swap data augmentation unnecessary. The bilinear pairing
+$P_A \cdot Q_B - P_B \cdot Q_A$ encodes **directed** matchups (X beats Y) that an additive strength
+model cannot express, while keeping the whole head sign-flipping.
 
 ## Training
 
-- **Loss:** binary cross-entropy on the win label.
-- **Recency weighting:** samples are time-decayed (configurable half-life) so the model can
-  lean toward recent meta — relevant because brawler strength shifts with balance patches.
+The objective is **recency-weighted binary cross-entropy** on the win label $y_i \in \{0, 1\}$ ($1$
+when team $A$ won). Each match is down-weighted by an exponential time-decay so the fit leans toward
+the live meta across balance patches:
+
+$$
+\mathcal{L}(\theta) = -\sum_i w_i \big[\, y_i \log \hat p_i + (1 - y_i)\log(1 - \hat p_i) \,\big],
+\qquad
+\hat p_i = \sigma\!\big(\ell(A_i, B_i \mid c_i)\big),
+\qquad
+w_i = 2^{-(t_{\max} - t_i)/\tau},
+$$
+
+with a configurable half-life $\tau$ (default $\approx 30$ days, so a game from a month ago carries
+about half the weight of a fresh one; the weights are normalized to mean $1$).
+
+- **Recency weighting** uses the same exponential time-decay as the empirical stats table, so the
+  model and the stats both lean on recent matches; pass a non-positive half-life to disable it
+  (uniform weights) for backtests.
 - **Split:** random 85/15 train/val (seeded). Optimizer AdamW, weight decay 1e-4, early
   stopping on validation log-loss.
 - **Baselines:** (a) constant 0.5, (b) logistic regression on signed brawler-presence features.
@@ -102,7 +141,29 @@ beyond public player tags/handles is stored. Not affiliated with Supercell.
 
 ## How the engine uses it
 
-The model is one component of a transparent fused score
-(`map win-rate + synergy + counter + role-fit + model + mastery`), and the leaf evaluator for
-the seat-aware minimax search. Every component is surfaced in the UI so recommendations are
-explainable rather than a black box.
+The model is one component of a transparent fused score, combined with empirical signals from the
+collected matches. Every raw win-rate is **Bayesian-shrunk** toward a prior $\pi$ (0.5 globally, or
+the global rate for a per-bracket table) with a pseudo-count $\kappa = 20$, which also defines the
+confidence shown in the UI:
+
+$$
+\widehat{w} = \frac{\text{wins} + \kappa\,\pi}{\text{games} + \kappa},
+\qquad
+\mathrm{conf} = \frac{\text{games}}{\text{games} + \kappa},
+$$
+
+where "wins" and "games" are recency-weighted counts $\sum_i w_i$ (the same exponential time-decay
+used to train the model, here with a ~3-week half-life). The
+map win-rate, synergy, counter, role-fit, model, and optional mastery signals are then fused into a
+renormalized weighted average over whichever signals $\mathcal{A}$ are *active* at the current draft
+state:
+
+$$
+\mathrm{score}(b) = \frac{\sum_{k \in \mathcal{A}} \omega_k\, v_k(b)}{\sum_{k \in \mathcal{A}} \omega_k}.
+$$
+
+That fused score drives the displayed pick ranking. The seat-aware **minimax** search instead uses the
+model as its leaf evaluator and a cheaper heuristic to prune each node to its top-$K$ candidates,
+$h(b) = 0.5\,\mathrm{mw}(b) + 0.25\,\overline{\mathrm{syn}}(b) + 0.25\,\overline{\mathrm{cnt}}(b)$ — see
+the [README](../README.md#how-it-works) for the recursion. Every component is surfaced in the UI, so
+recommendations are explainable rather than a black box.

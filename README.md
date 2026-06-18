@@ -65,22 +65,55 @@ match key (the same match appears in up to 6 players' logs). Result: 30k+ labele
 `(map, team A, team B) → winner` rows.
 
 **2. Win-probability model.** A small PyTorch network with learned brawler, map, and mode
-embeddings. The key design choice is an **antisymmetric** head:
+embeddings. The key design choice is an **antisymmetric** head that outputs the logit of
+$P(A \text{ wins})$ given the map/mode context $c$:
 
-```
-logit = [ S(A, ctx) − S(B, ctx) ]      # context-conditioned team strength
-      + [ PA·QB − PB·QA ]               # low-rank antisymmetric counter term
-```
+$$
+\mathrm{logit}(A, B \mid c) = \underbrace{S(A, c) - S(B, c)}_{\text{team strength}} \;+\; \underbrace{P_A \cdot Q_B - P_B \cdot Q_A}_{\text{directed counters}}
+$$
 
-Swapping the two teams negates the logit, so `P(A wins) + P(B wins) = 1` *by construction* —
-no team-order bias and no global offset to learn. The counter term captures specific matchups
-(brawler X beats Y) that a pure strength model can't.
+$$
+c = [\,e_{\text{map}},\ e_{\text{mode}}\,], \qquad
+S(T, c) = \mathrm{MLP}\!\big(\big[\, \tfrac{1}{|T|}\sum_{b \in T} E_b,\ c \,\big]\big), \qquad
+P_T = \sum_{b \in T} p_b, \quad Q_T = \sum_{b \in T} q_b
+$$
+
+where $E_b$ is a learned brawler embedding, $[\,\cdot,\,\cdot\,]$ is concatenation, and
+$p_b, q_b \in \mathbb{R}^{16}$ are low-rank **attacker / defender** vectors whose dot products encode
+directed matchups. Every term flips sign when the teams are swapped, so
+$\mathrm{logit}(B, A \mid c) = -\,\mathrm{logit}(A, B \mid c)$ and therefore
+
+$$
+P(A \text{ wins}) + P(B \text{ wins}) = \sigma(z) + \sigma(-z) = 1
+$$
+
+holds **by construction** — no team-order bias and no global offset to learn. The bilinear counter
+term captures specific matchups (brawler X beats Y) that a pure strength model can't express.
 
 **3. Draft engine.** Given a draft state, it fuses the model with empirical map win-rates,
-synergy, counters, role-fit, and (optionally) your mastery into a transparent score. The
-**seat-aware search** runs a depth-limited, top-K-pruned, memoized minimax over the remaining
-snake, evaluating completed drafts with the model — so it values picks by their projected
-win-probability *after the enemy responds optimally*.
+synergy, counters, role-fit, and (optionally) your mastery into one transparent score — a
+*renormalized* weighted average over only the signals that are **active** so far (synergy needs
+allies, counters need a revealed enemy, mastery needs your roster):
+
+$$
+\mathrm{score}(b) = \frac{\sum_{k \in \mathcal{A}} \omega_k\, v_k(b)}{\sum_{k \in \mathcal{A}} \omega_k}, \qquad
+\mathcal{A} \subseteq \{\, \text{map},\ \text{model},\ \text{counter},\ \text{synergy},\ \text{role},\ \text{mastery} \,\}
+$$
+
+The **seat-aware search** then runs a depth-limited, top-$K$-pruned, memoized **minimax** over the
+remaining 1-2-2-1 snake: we maximize win-probability, the enemy minimizes it, and completed drafts
+are scored by the model $f_\theta$.
+
+$$
+V(A, B) = \begin{cases}
+f_\theta(A, B \mid c) & |A| = |B| = 3 \\
+\max_{b \,\in\, \mathcal{T}_K} V(A \cup \{b\},\ B) & \text{our seat} \\
+\min_{b \,\in\, \mathcal{T}_K} V(A,\ B \cup \{b\}) & \text{enemy seat}
+\end{cases}
+$$
+
+So a pick is valued by its projected win-probability *after the enemy responds optimally*, not by its
+immediate stats alone — and memoizing on $(A, B)$ collapses the snake's many transpositions.
 
 **4. App.** A FastAPI backend serves the engine; a Next.js board calls it and renders live,
 explainable recommendations.
