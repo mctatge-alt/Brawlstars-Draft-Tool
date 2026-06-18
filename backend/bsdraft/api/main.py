@@ -28,6 +28,7 @@ from bsdraft.data import sync
 from bsdraft.engine import mastery
 from bsdraft.engine.drift import detect_drift
 from bsdraft.engine.engine import DraftEngine
+from bsdraft.engine.personal import build_personal_stats, matches_from_battlelog
 from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.playerrank import build_rank_index, latest_ranked_tier
@@ -42,6 +43,8 @@ _last_check: float = 0.0   # epoch of the last sync attempt (liveness)
 _last_change: float = 0.0  # epoch of the last actual data change
 _meta_cache = None         # (data_version, MetaReport); recomputed lazily when data changes
 _rank_idx_cache = None     # (data_version, {tag: (ts, tier)}); recomputed lazily when data changes
+_personal_cache: dict = {} # tag -> (data_version, PersonalStats|None); rebuilt when data changes
+_roster_cache: dict = {}   # normalized tag -> (fetched_at, RosterResponse); short TTL spares the live API
 
 
 def _build_stats():
@@ -57,6 +60,24 @@ def _rank_index():
     if _rank_idx_cache is None or _rank_idx_cache[0] != _last_change:
         _rank_idx_cache = (_last_change, build_rank_index())
     return _rank_idx_cache[1]
+
+
+def _personal_for(tag: Optional[str]):
+    """Cached personal stats for ``tag``, derived from the synced dataset (key-free, so it
+    works on the public host) and rebuilt when the data changes. Returns None when the tag
+    is empty or the player has no labeled games in our data. A live battle-log augment can
+    pre-seed a richer entry at startup (see lifespan), which this cache then serves."""
+    t = normalize_tag(tag or "")
+    if not t or _engine is None:
+        return None
+    hit = _personal_cache.get(t)
+    if hit is not None and hit[0] == _last_change:
+        return hit[1]
+    if len(_personal_cache) > 256:   # simple bound — tags are cheap to rebuild
+        _personal_cache.clear()
+    ps = build_personal_stats(t, fallback=_engine.stats)
+    _personal_cache[t] = (_last_change, ps)
+    return ps
 
 
 async def _refresh_loop() -> None:
@@ -96,9 +117,18 @@ async def lifespan(app: FastAPI):
     g, br = _build_stats()
     _engine = DraftEngine(g, WinProbModel(), bracket_stats=br)
     if settings.player_tag:
+        ptag = normalize_tag(settings.player_tag)
         try:
             async with BrawlStarsClient() as client:
                 _engine.roster, _engine.roster_name = await mastery.fetch_roster(client, settings.player_tag)
+                # Prime personal stats with the player's freshest games (needs the live key,
+                # so local/home only); the public host falls back to dataset-derived stats.
+                try:
+                    extra = matches_from_battlelog(await client.get_battlelog(ptag), ptag)
+                    _personal_cache[ptag] = (_last_change, build_personal_stats(
+                        ptag, fallback=_engine.stats, extra_matches=extra))
+                except Exception:
+                    pass
         except Exception:
             _engine.roster, _engine.roster_name = None, ""
     task = None
@@ -175,15 +205,25 @@ def reference():
 
 @app.get("/api/roster", response_model=S.RosterResponse)
 async def roster(tag: Optional[str] = None):
+    """The configured (or given) player's roster — owned brawlers, loadout completeness, and
+    mastery — fetched live from Supercell (needs the IP-locked key, so local/home only). The
+    frontend re-polls this so a long session stays current; a successful result is cached for
+    ``roster_ttl_seconds`` so the polling doesn't hammer the live API."""
     t = (tag or settings.player_tag or "").strip()
     if not t:
         return S.RosterResponse(loaded=False, tag="", name="", error="no player tag configured")
+    key = normalize_tag(t)
+    hit = _roster_cache.get(key)
+    if hit is not None and (time.time() - hit[0]) < settings.roster_ttl_seconds:
+        return hit[1]
     try:
         async with BrawlStarsClient() as client:
             r, name = await mastery.fetch_roster(client, t)
         _engine.roster, _engine.roster_name = r, name
         owned = [S.OwnedBrawler(id=bid, mastery=round(m.score, 3), gaps=m.gaps()) for bid, m in r.items()]
-        return S.RosterResponse(loaded=True, tag=t, name=name, owned=owned)
+        resp = S.RosterResponse(loaded=True, tag=t, name=name, owned=owned)
+        _roster_cache[key] = (time.time(), resp)  # cache only successful loads; errors retry next poll
+        return resp
     except Exception as e:  # noqa: BLE001
         return S.RosterResponse(loaded=False, tag=t, name="", error=str(e))
 
@@ -214,6 +254,25 @@ async def rank(tag: str):
                               error="not in our data, and live lookup isn't available here")
 
 
+@app.get("/api/top_picks", response_model=S.TopPicksResponse)
+def top_picks(map_id: int, mode: str, rank_bracket: Optional[str] = None, top: int = 10):
+    """The strongest brawlers on this map *in a vacuum* — an empty board, no roster, so every
+    brawler is judged at a full loadout (all gadgets, gears & star powers) and nothing is
+    filtered out by ownership or mastery. Ranked by the engine's first-pick score; stable
+    across a draft, so the frontend fetches it once per map/bracket as a constant 'who's
+    generally strong here' rail alongside the live, personalized recommendations."""
+    state = DraftState(map_id=map_id, mode=mode, we_pick_first=True, rank_bracket=rank_bracket)
+    picks = _engine.recommend_picks(state, top=top, roster=None)
+    return S.TopPicksResponse(
+        map_id=map_id, mode=mode, rank_bracket=rank_bracket,
+        picks=[
+            S.TopPick(brawler_id=p.brawler_id, name=p.name, cls=p.cls,
+                      score=round(p.score, 4), map_winrate=round(p.map_winrate, 4))
+            for p in picks
+        ],
+    )
+
+
 @app.post("/api/recommend", response_model=S.RecommendResponse)
 def recommend(req: S.RecommendRequest):
     state = DraftState(
@@ -222,6 +281,7 @@ def recommend(req: S.RecommendRequest):
         we_pick_first=req.we_pick_first, solo_queue=req.solo_queue, rank_bracket=req.rank_bracket,
     )
     roster = _engine.roster if (req.personalize and _engine.roster) else None
+    personal = _personal_for(req.personal_tag)
     composition = _engine.composition(state)
     warnings = _engine.composition_report(state)["warnings"]
     game_plan = S.GamePlan(**_engine.game_plan(state))
@@ -238,11 +298,13 @@ def recommend(req: S.RecommendRequest):
     if can_search:
         picks = []
         for sr in _engine.search_recommend(state, top=req.top, roster=roster):
-            scored = vars(score_candidate(state, sr.brawler_id, _engine._stats_for(state), _engine.model, roster=roster))
+            scored = vars(score_candidate(state, sr.brawler_id, _engine._stats_for(state),
+                                          _engine.model, roster=roster, personal=personal))
             scored["projected_winprob"] = sr.projected_winprob
             picks.append(S.PickRec(**scored))
     else:
-        picks = [S.PickRec(**vars(p)) for p in _engine.recommend_picks(state, top=req.top, roster=roster)]
+        picks = [S.PickRec(**vars(p))
+                 for p in _engine.recommend_picks(state, top=req.top, roster=roster, personal=personal)]
 
     return S.RecommendResponse(
         phase="pick", picks=picks,

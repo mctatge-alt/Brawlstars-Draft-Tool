@@ -66,9 +66,10 @@ class DraftEngine:
         rows.sort(key=lambda r: r.threat, reverse=True)
         return rows[:top]
 
-    def recommend_picks(self, state: DraftState, top: int = 10, weights=None, roster=None) -> List[PickScore]:
+    def recommend_picks(self, state: DraftState, top: int = 10, weights=None, roster=None,
+                        personal=None) -> List[PickScore]:
         stats = self._stats_for(state)
-        scored = [score_candidate(state, c, stats, self.model, weights, roster)
+        scored = [score_candidate(state, c, stats, self.model, weights, roster, personal)
                   for c in self.candidates(state, roster)]
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:top]

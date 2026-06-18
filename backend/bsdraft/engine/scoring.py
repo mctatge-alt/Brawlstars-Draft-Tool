@@ -26,7 +26,12 @@ MODE_CLASS_PREF: Dict[str, Dict[str, float]] = {
 }
 DEFAULT_PREF = 0.5
 
-DEFAULT_WEIGHTS = {"map": 0.40, "model": 0.20, "counter": 0.15, "synergy": 0.15, "role": 0.10, "mastery": 0.25}
+# Fusion weights. map/counter rebalanced .40/.15 -> .32/.23 per the held-out ablation
+# (scripts/ablate_context.py + docs/model-evaluation.md): counter is the strongest
+# head-to-head signal and was under-weighted, map slightly over-weighted. Per-map/mode
+# weighting was tested and found no better than these global weights, so they stay fixed.
+DEFAULT_WEIGHTS = {"map": 0.32, "model": 0.20, "counter": 0.23, "synergy": 0.15, "role": 0.10,
+                   "mastery": 0.25, "personal": 0.20}
 
 
 @dataclass
@@ -42,6 +47,8 @@ class PickScore:
     win_prob: Optional[float]
     confidence: float
     mastery: Optional[float] = None
+    personal_winrate: Optional[float] = None  # this player's own win rate w/ the brawler
+    personal_games: Optional[float] = None     # their effective sample (recency-weighted)
     owned: bool = True
     gaps: List[str] = field(default_factory=list)
     breakdown: Dict[str, float] = field(default_factory=dict)
@@ -97,7 +104,8 @@ def model_marginal(state: DraftState, candidate: int, model, stats) -> Optional[
     return model.prob(our, their, state.map_id, state.mode)
 
 
-def score_candidate(state: DraftState, candidate: int, stats, model=None, weights=None, roster=None) -> PickScore:
+def score_candidate(state: DraftState, candidate: int, stats, model=None, weights=None,
+                    roster=None, personal=None) -> PickScore:
     weights = weights or DEFAULT_WEIGHTS
     cls = _class_of(candidate)
 
@@ -123,6 +131,19 @@ def score_candidate(state: DraftState, candidate: int, stats, model=None, weight
             mastery_val = m.score
             gaps = m.gaps()
 
+    # The player's own win rate with this brawler (on this map when they've played it there).
+    # Only counts once they've actually played it; its weight scales with confidence, so a
+    # thin personal sample nudges gently and a deep one speaks up.
+    personal_wr: Optional[float] = None
+    personal_games: Optional[float] = None
+    personal_weight = 0.0
+    if personal is not None:
+        pr = personal.brawler_rate(candidate, state.map_id)
+        if pr.games > 0:
+            personal_wr = pr.winrate
+            personal_games = pr.games
+            personal_weight = weights.get("personal", 0.0) * pr.confidence
+
     parts: Dict[str, tuple] = {"map": (map_rate.winrate, weights["map"]), "role": (rfit, weights["role"])}
     if synergy is not None:
         parts["synergy"] = (synergy, weights["synergy"])
@@ -132,6 +153,8 @@ def score_candidate(state: DraftState, candidate: int, stats, model=None, weight
         parts["model"] = (win_prob, weights["model"])
     if mastery_val is not None:
         parts["mastery"] = (mastery_val, weights["mastery"])
+    if personal_wr is not None and personal_weight > 0:
+        parts["personal"] = (personal_wr, personal_weight)
 
     wsum = sum(w for _, w in parts.values())
     score = sum(v * w for v, w in parts.values()) / wsum
@@ -148,6 +171,8 @@ def score_candidate(state: DraftState, candidate: int, stats, model=None, weight
         win_prob=win_prob,
         confidence=map_rate.confidence,
         mastery=mastery_val,
+        personal_winrate=personal_wr,
+        personal_games=personal_games,
         owned=owned,
         gaps=gaps,
         breakdown={k: round(v, 3) for k, (v, _) in parts.items()},

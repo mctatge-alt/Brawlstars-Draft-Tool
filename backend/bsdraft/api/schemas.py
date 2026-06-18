@@ -18,6 +18,7 @@ class RecommendRequest(BaseModel):
     phase: str = "pick"          # "pick" | "ban"
     use_search: bool = False     # seat-aware minimax lookahead
     personalize: bool = False    # weight by the player's roster / mastery
+    personal_tag: Optional[str] = None   # fold in this player's own win rates (resolved from data)
     top: int = 8
 
 
@@ -34,6 +35,8 @@ class PickRec(BaseModel):
     confidence: float
     projected_winprob: Optional[float] = None  # set when seat-aware search is used
     mastery: Optional[float] = None
+    personal_winrate: Optional[float] = None   # this player's own win rate with the brawler
+    personal_games: Optional[float] = None      # their effective (recency-weighted) sample
     owned: bool = True
     gaps: List[str] = []
     breakdown: Dict[str, float]
@@ -86,6 +89,22 @@ class RecommendResponse(BaseModel):
     warnings: List[Warning] = []
     game_plan: Optional[GamePlan] = None
     next_to_act: Optional[str] = None
+
+
+class TopPick(BaseModel):
+    brawler_id: int
+    name: str
+    cls: str
+    score: float
+    map_winrate: float
+
+
+class TopPicksResponse(BaseModel):
+    """Strongest brawlers on a map in a vacuum (empty board, full loadout, no roster)."""
+    map_id: int
+    mode: str
+    rank_bracket: Optional[str] = None
+    picks: List[TopPick] = []
 
 
 class BrawlerRef(BaseModel):

@@ -8,7 +8,8 @@ export type PickRec = {
   brawler_id: number; name: string; cls: string; score: number; map_winrate: number;
   synergy: number | null; counter: number | null; role_fit: number;
   win_prob: number | null; confidence: number; projected_winprob: number | null;
-  mastery: number | null; owned: boolean; gaps: string[];
+  mastery: number | null; personal_winrate: number | null; personal_games: number | null;
+  owned: boolean; gaps: string[];
   breakdown: Record<string, number>;
 };
 export type BanRec = {
@@ -52,10 +53,17 @@ export type Meta = {
   new_brawlers: string[]; shifts: MetaShift[]; note: string;
 };
 
+export type TopPick = {
+  brawler_id: number; name: string; cls: string; score: number; map_winrate: number;
+};
+export type TopPicksResponse = {
+  map_id: number; mode: string; rank_bracket: string | null; picks: TopPick[];
+};
+
 export type RecommendBody = {
   map_id: number; mode: string; our_team: number[]; their_team: number[]; bans: number[];
   we_pick_first: boolean; solo_queue: boolean; rank_bracket?: string | null; phase: "pick" | "ban";
-  use_search: boolean; personalize: boolean; top: number;
+  use_search: boolean; personalize: boolean; personal_tag?: string | null; top: number;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
@@ -87,6 +95,16 @@ export async function getRank(tag: string): Promise<RankInfo> {
 export async function getRoster(): Promise<RosterResponse> {
   const res = await fetch(`${API_BASE}/api/roster`);
   if (!res.ok) throw new Error(`roster: ${res.status}`);
+  return res.json();
+}
+
+export async function getTopPicks(
+  mapId: number, mode: string, bracket?: string | null
+): Promise<TopPicksResponse> {
+  const qs = new URLSearchParams({ map_id: String(mapId), mode });
+  if (bracket) qs.set("rank_bracket", bracket);
+  const res = await fetch(`${API_BASE}/api/top_picks?${qs.toString()}`);
+  if (!res.ok) throw new Error(`top_picks: ${res.status}`);
   return res.json();
 }
 

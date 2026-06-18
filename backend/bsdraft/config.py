@@ -43,6 +43,11 @@ class Settings(BaseSettings):
 
     # Engine tuning
     stats_halflife_days: float = 21.0  # recency half-life (days) for empirical stats; <=0 disables decay
+    # The frontend re-polls the roster so a long session picks up newly unlocked/upgraded
+    # brawlers. Serve a cached roster for this many seconds so that polling (and multiple
+    # tabs) don't each hit the live Supercell API. Keep it well below the poll interval so a
+    # poll still refreshes. 0 disables caching (every request fetches live).
+    roster_ttl_seconds: int = 90
 
     @property
     def seed_countries(self):

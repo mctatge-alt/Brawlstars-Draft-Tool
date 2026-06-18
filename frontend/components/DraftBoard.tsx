@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health, Meta, RankInfo,
-  getReference, getRoster, recommend, getHealth, getMeta, getRank,
+  Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health, Meta, RankInfo, TopPick,
+  getReference, getRoster, recommend, getHealth, getMeta, getRank, getTopPicks,
 } from "@/lib/api";
 
 const CLASS_COLOR: Record<string, string> = {
@@ -66,6 +66,7 @@ type Step =
   | { kind: "done" };
 
 const BAN_N = 6, TEAM_N = 3;
+const ROSTER_POLL_MS = 5 * 60 * 1000; // re-check the player's roster/inventory every 5 min
 const PICK_ORDER = [0, 1, 1, 0, 0, 1]; // 1-2-2-1 snake; 0 = first-pick team
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const cssVars = (vars: Record<string, string>) => vars as React.CSSProperties;
@@ -227,6 +228,8 @@ export default function DraftBoard() {
   const [activeOverride, setActiveOverride] = useState<Slot | null>(null);
   const [solo, setSolo] = useState(true);
   const [recs, setRecs] = useState<RecommendResponse | null>(null);
+  const [topPicks, setTopPicks] = useState<TopPick[]>([]);
+  const [railOk, setRailOk] = useState(true);  // hide the rail if the endpoint isn't available
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [query, setQuery] = useState("");
   const [useSearch, setUseSearch] = useState(false);
@@ -240,7 +243,6 @@ export default function DraftBoard() {
       const best = [...r.maps].filter((m) => m.games > 0).sort((a, b) => b.games - a.games)[0] || r.maps[0];
       if (best) setMapId(best.id);
     }).catch((e) => setErr(String(e)));
-    getRoster().then(setRoster).catch(() => {});
     getHealth().then(setHealth).catch(() => {});
     getMeta().then(setMeta).catch(() => {});
     const savedTag = localStorage.getItem("bsdraft.tag");
@@ -248,6 +250,26 @@ export default function DraftBoard() {
       setTag(savedTag);
       getRank(savedTag).then(setRankInfo).catch(() => {});
     }
+  }, []);
+
+  // The roster (owned brawlers + loadout/mastery) only changes when the player unlocks or
+  // upgrades something, so a one-shot fetch can go stale in a long session. Re-poll it on an
+  // interval and when the tab regains focus; the backend caches it briefly, so this stays
+  // cheap on the live API.
+  useEffect(() => {
+    let cancelled = false;
+    let last = 0;
+    const pull = () => {
+      last = Date.now();
+      getRoster().then((r) => { if (!cancelled) setRoster(r); }).catch(() => {});
+    };
+    pull();
+    const id = setInterval(pull, ROSTER_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && Date.now() - last > 60_000) pull();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
 
   const byId = useMemo(() => {
@@ -265,6 +287,9 @@ export default function DraftBoard() {
   const personalizeReady = !!roster?.loaded;
   // recommendations are tuned to the player's own rank bracket (null = all ranks)
   const bracket = rankInfo?.found ? rankInfo.bracket : null;
+  // once the player's tag is confirmed, fold in their own win rates (resolved from our data,
+  // so it works without an API key); null leaves picks at the population meta.
+  const personalTag = rankInfo?.found ? rankInfo.tag : null;
 
   // --- draft order: ban×6 → 1-2-2-1 snake (by first pick). The active slot is the
   //     slot the user clicked if it's still empty, else the next empty slot in order. ---
@@ -294,6 +319,7 @@ export default function DraftBoard() {
       bans: bans.filter((x): x is number => x != null),
       we_pick_first: wePickFirst, solo_queue: solo, phase,
       use_search: useSearch, personalize: personalize && personalizeReady,
+      personal_tag: personalTag,
       rank_bracket: bracket, top: 12,
     };
     setLoading(true);
@@ -304,7 +330,18 @@ export default function DraftBoard() {
         .finally(() => setLoading(false));
     }, 120);
     return () => clearTimeout(t);
-  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, bracket]);
+  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, bracket, personalTag]);
+
+  // "Full-loadout" rail: strongest brawlers on this map in a vacuum (empty board, no roster).
+  // Independent of the live draft and personalization, so it only refetches on map/bracket.
+  useEffect(() => {
+    if (!mapId || !mode) return;
+    let cancelled = false;
+    getTopPicks(mapId, mode, bracket)
+      .then((r) => { if (!cancelled) { setTopPicks(r.picks); setRailOk(true); } })
+      .catch(() => { if (!cancelled) setRailOk(false); });
+    return () => { cancelled = true; };
+  }, [mapId, mode, bracket]);
 
   const setZone = (zone: Zone, idx: number, val: number | null) => {
     const apply = (arr: (number | null)[]) => arr.map((x, i) => (i === idx ? val : x));
@@ -442,7 +479,7 @@ export default function DraftBoard() {
       {meta?.shifted && <MetaBanner meta={meta} />}
       <StatusBanner key={step.kind === "pick" ? `pick-${step.side}-${step.slot.index}` : step.kind} step={step} />
 
-      <div className="grid lg:grid-cols-[1fr_360px] gap-5">
+      <div className={`grid gap-5 ${railOk ? "lg:grid-cols-[1fr_360px_auto]" : "lg:grid-cols-[1fr_360px]"}`}>
         {/* LEFT: board + picker */}
         <div>
           <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-4 mb-4 anim-fade-up" style={{ animationDelay: "120ms" }}>
@@ -540,6 +577,12 @@ export default function DraftBoard() {
             {!recs && [0, 1, 2, 3].map((i) => <SkeletonCard key={i} />)}
           </div>
         </div>
+
+        {/* RAIL: full-loadout meta top 10 (vacuum, icons only) — hidden if the endpoint is unavailable */}
+        {railOk && (
+          <TopPicksRail picks={topPicks} byId={byId} used={used}
+            onPick={place} disabled={step.kind === "done"} />
+        )}
       </div>
       {recs?.game_plan && our.some((x) => x != null) && <GamePlanPanel gp={recs.game_plan} />}
       <footer className="text-center text-xs text-[var(--muted)] mt-6">
@@ -601,9 +644,16 @@ function PickCard({ r, i, b, onClick }: { r: PickRec; i: number; b?: Brawler; on
         <Bar label="role" value={r.role_fit} />
         {r.win_prob != null && <Bar label="model" value={r.win_prob} />}
         {r.mastery != null && <Bar label="mastery" value={r.mastery} />}
+        {r.personal_winrate != null && <Bar label="you" value={r.personal_winrate} />}
       </div>
       <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[10px] text-[var(--muted)]">
         <span>confidence {pct(r.confidence)}</span>
+        {r.personal_games != null && (
+          <span className="px-1.5 py-0.5 rounded" style={{ background: "#5aa0ff22", color: "#7fb4ff" }}
+            title="your recent ranked games with this brawler (recency-weighted)">
+            you · {Math.round(r.personal_games)}g
+          </span>
+        )}
         {(r.gaps || []).map((g) => (
           <span key={g} className="px-1.5 py-0.5 rounded" style={{ background: "#e8843a22", color: "#e8a24a" }}>{g}</span>
         ))}
@@ -637,6 +687,49 @@ function BanCard({ r, i, b, onClick }: { r: BanRec; i: number; b?: Brawler; onCl
         </div>
       </div>
     </button>
+  );
+}
+
+// Skinny, icons-only rail of the map's strongest brawlers in a vacuum — judged at a full
+// loadout (all gadgets, gears & star powers) with no roster filter. Stable across the draft;
+// a constant "who's generally strong here" reference beside the live, personalized picks.
+function TopPicksRail({ picks, byId, used, onPick, disabled }: {
+  picks: TopPick[]; byId: Map<number, Brawler>; used: Set<number>;
+  onPick: (id: number) => void; disabled: boolean;
+}) {
+  const blurb =
+    "The strongest brawlers on this map if you owned every brawler at a full loadout — " +
+    "all gadgets, gears & star powers. A general meta tier list, independent of the live " +
+    "draft and your roster.";
+  return (
+    <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-2 h-fit lg:sticky lg:top-4 anim-fade-up"
+      style={{ animationDelay: "300ms" }}>
+      <div className="text-center mb-2 px-0.5 cursor-help" title={blurb}>
+        <div className="text-base leading-none floaty">👑</div>
+        <div className="text-[9px] uppercase tracking-wide text-[var(--muted)] leading-tight mt-0.5">
+          Top 10<br />full loadout
+        </div>
+      </div>
+      <div className="flex flex-row flex-wrap justify-center gap-1.5 lg:flex-col lg:items-center">
+        {picks.length === 0
+          ? [0, 1, 2, 3, 4].map((i) => <div key={i} className="w-12 h-12 rounded-lg skeleton" />)
+          : picks.map((p, i) => {
+              const b = byId.get(p.brawler_id);
+              const isUsed = used.has(p.brawler_id);
+              return (
+                <button key={p.brawler_id} onClick={() => onPick(p.brawler_id)}
+                  disabled={isUsed || disabled}
+                  className="group anim-pop disabled:cursor-not-allowed"
+                  style={cssVars({ animationDelay: `${i * 40}ms` })}
+                  title={`#${i + 1}  ${p.name}\n${pct(p.score)} pick score · ${pct(p.map_winrate)} map win rate\nassumes a full loadout (all gadgets, gears & star powers)`}>
+                  <span className="tile-img" style={cssVars({ "--c": CLASS_COLOR[p.cls] || "#26303f" })}>
+                    <Avatar b={b} size={48} dim={isUsed} />
+                  </span>
+                </button>
+              );
+            })}
+      </div>
+    </div>
   );
 }
 
