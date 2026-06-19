@@ -54,6 +54,20 @@ def _try_publish() -> None:
         print(f"publish failed: {e}")
 
 
+def _publish_stats() -> None:
+    """Build the full empirical stats and publish stats.json.gz so the live API LOADS them
+    instead of rebuilding from the whole dataset (which OOMs the 512 MB free tier). Best-effort
+    — never kills the crawl loop."""
+    try:
+        from bsdraft.engine.stats import build_bracketed
+        from bsdraft.engine.stats_store import save_stats
+        g, br = build_bracketed(halflife_days=settings.stats_halflife_days)  # all matches
+        save_stats(g, br, publisher.STATS_PATH)
+        publisher.publish_stats()
+    except Exception as e:  # noqa: BLE001 — a stats hiccup shouldn't kill a long crawl loop
+        print(f"stats publish failed: {e}")
+
+
 def _check_meta(retrain_on_shift: bool) -> None:
     """Run the meta-drift detector on the freshly crawled data and print the report. When the
     meta has shifted and ``--retrain-on-shift`` is set, kick a model retrain so recommendations
@@ -99,6 +113,7 @@ async def _loop(target: int, countries: list, interval: int, do_publish: bool,
         await _run(target, countries, revisit_after)
         if do_publish:
             _try_publish()
+            _publish_stats()
         if meta_check:
             _check_meta(retrain_on_shift)
         print(f"sleeping {interval}s …  (Ctrl-C to stop)")

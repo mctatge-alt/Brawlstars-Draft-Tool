@@ -142,7 +142,9 @@ def build_personal_stats(
     tag_n = normalize_tag(tag)
     if not tag_n:
         return None
-    rows = list(iter_matches())
+    # Stream-filter to just this player's games (bounded memory) instead of materializing the
+    # whole dataset — PersonalStats only ever uses matches the tag appears in.
+    rows = [r for r in iter_matches() if tag_n in (r.get("player_tags") or ())]
     if extra_matches:
         rows.extend(extra_matches)
     ps = PersonalStats(tag_n, rows, fallback=fallback, halflife_days=halflife_days)

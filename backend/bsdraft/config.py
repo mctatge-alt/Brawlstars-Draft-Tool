@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # it alongside the dataset and hot-swaps the reloaded model in without a restart — so a
     # retrain (e.g. after a balance shift) rolls out live instead of waiting for a redeploy.
     model_url: str = ""
+    # URL of the published precomputed stats (stats.json.gz Release asset). When set, the API
+    # LOADS the empirical stats from it instead of rebuilding them in memory from the full
+    # match dataset — so it uses *all* matches with no 512 MB OOM (the home machine builds +
+    # publishes them; see scripts/export_stats.py). Unset = rebuild locally (capped, below).
+    stats_url: str = ""
     refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
     # Comma-separated allowed CORS origins. "*" allows any (fine for the read-only meta API).
     # Lock this to your site's origin on the roster host you expose via the tunnel, e.g.

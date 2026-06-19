@@ -122,6 +122,34 @@ def _window_counts(rows: List[dict], lo: float, hi: float) -> Tuple[Dict[int, in
     return games, wins, n
 
 
+def _two_window_counts(rows: Iterable[dict], prior_lo: float, recent_lo: float, recent_hi: float):
+    """Per-brawler (games, wins) and match counts for the recent ``[recent_lo, recent_hi)`` and
+    prior ``[prior_lo, recent_lo)`` windows, in one streaming pass (bounded memory)."""
+    rg: Dict[int, int] = defaultdict(int)
+    rw: Dict[int, int] = defaultdict(int)
+    pg: Dict[int, int] = defaultdict(int)
+    pw: Dict[int, int] = defaultdict(int)
+    n_recent = n_prior = 0
+    for r in rows:
+        ts = int(r.get("ts") or 0)
+        if recent_lo <= ts < recent_hi:
+            g, w = rg, rw
+            n_recent += 1
+        elif prior_lo <= ts < recent_lo:
+            g, w = pg, pw
+            n_prior += 1
+        else:
+            continue
+        won = r["a_won"]
+        for team, win in ((r["team_a"], won), (r["team_b"], not won)):
+            for p in team:
+                bid = p["brawler_id"]
+                g[bid] += 1
+                if win:
+                    w[bid] += 1
+    return rg, rw, n_recent, pg, pw, n_prior
+
+
 def detect_new_content(observed_ids: Iterable[int], known_ids: Optional[Iterable[int]] = None) -> List[int]:
     """Brawler ids seen in play but missing from the known reference — a new release. Pass a
     freshly fetched /brawlers catalog as ``observed_ids`` for the cleanest signal; match-derived
@@ -141,19 +169,31 @@ def detect_drift(
     """Compare a recent window against the window before it and flag win-rate shifts too large
     to be noise, plus any newly released brawlers. Windows are anchored on the newest match,
     so the result is deterministic and independent of when it runs."""
-    rows = [r for r in (matches if matches is not None else iter_matches()) if r.get("a_won") is not None]
-    new_brawlers = detect_new_content(
-        {p["brawler_id"] for r in rows for p in r["team_a"] + r["team_b"]}
-    )
-    tmax = max((int(r.get("ts") or 0) for r in rows), default=0)
+    # Stream in two bounded passes (O(brawlers), not O(matches)): pass 1 finds the newest ts +
+    # observed brawlers; pass 2 tallies the two time windows. iter_matches() yields a fresh
+    # reader each call, so the full dataset is never resident.
+    provided = matches is not None
+    src = list(matches) if provided else None
+    def _labeled():
+        it = iter(src) if provided else iter_matches()
+        return (r for r in it if r.get("a_won") is not None)
+
+    tmax = 0
+    observed: set = set()
+    for r in _labeled():
+        ts = int(r.get("ts") or 0)
+        if ts > tmax:
+            tmax = ts
+        for p in r["team_a"] + r["team_b"]:
+            observed.add(p["brawler_id"])
+    new_brawlers = detect_new_content(observed)
     if tmax <= 0:
         return MetaReport(bool(new_brawlers), recent_days, prior_days, 0, 0,
                           new_brawlers=new_brawlers, note="no usable timestamps")
 
     recent_lo = tmax - recent_days * _DAY
     prior_lo = recent_lo - prior_days * _DAY
-    rg, rw, n_recent = _window_counts(rows, recent_lo, tmax + 1)
-    pg, pw, n_prior = _window_counts(rows, prior_lo, recent_lo)
+    rg, rw, n_recent, pg, pw, n_prior = _two_window_counts(_labeled(), prior_lo, recent_lo, tmax + 1)
 
     shifts: List[BrawlerShift] = []
     tested = 0

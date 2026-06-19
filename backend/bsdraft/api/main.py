@@ -33,6 +33,7 @@ from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.playerrank import build_rank_index, latest_ranked_tier
 from bsdraft.engine.stats import DraftStats, build_bracketed
+from bsdraft.engine.stats_store import load_stats
 from bsdraft.engine.tiers import BRACKETS, bracket_of_tier, tier_label
 from bsdraft.models.serve import WinProbModel
 
@@ -48,9 +49,14 @@ _roster_cache: dict = {}   # normalized tag -> (fetched_at, RosterResponse); sho
 
 
 def _build_stats():
-    """Build global stats + per-rank-bracket tables with the configured recency half-life.
-    Used at startup and on every live refresh, so both weight the meta identically.
-    Returns ``(global_stats, {bracket: stats})``."""
+    """Produce ``(global_stats, {bracket: stats})``. When STATS_URL is set the API **loads** the
+    precomputed stats artifact (built off-box from *all* matches, ~tens of MB, no OOM); otherwise
+    it **rebuilds** them from the synced matches, capped to STATS_MAX_MATCHES to bound peak RAM."""
+    if settings.stats_url and sync.STATS_PATH.exists():
+        try:
+            return load_stats(sync.STATS_PATH)
+        except Exception as e:  # noqa: BLE001 — a corrupt/old artifact must not break startup
+            logger.warning("stats load failed (%s); rebuilding from matches", e)
     return build_bracketed(halflife_days=settings.stats_halflife_days,
                            max_matches=settings.stats_max_matches)
 
@@ -89,13 +95,22 @@ async def _refresh_loop() -> None:
     while True:
         await asyncio.sleep(settings.refresh_seconds)
         try:
-            changed = await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
+            data_changed = (await loop.run_in_executor(None, sync.sync_matches, settings.data_url)
+                            if settings.data_url else False)
             _last_check = time.time()
-            if changed and _engine is not None:
+            if data_changed and _engine is not None:
+                _last_change = time.time()  # invalidate the rank / meta / personal caches
+            # Refresh the empirical stats from their source: the published artifact (STATS_URL,
+            # loaded — no in-memory rebuild) or, failing that, a local rebuild from the matches.
+            if settings.stats_url and _engine is not None:
+                if await loop.run_in_executor(None, sync.sync_stats, settings.stats_url):
+                    g, br = await loop.run_in_executor(None, _build_stats)
+                    _engine.stats, _engine.bracket_stats = g, br
+                    logger.info("draft stats reloaded: %d matches, %d bracket(s)", g.n, len(br))
+            elif data_changed and _engine is not None:
                 g, br = await loop.run_in_executor(None, _build_stats)
-                _engine.stats, _engine.bracket_stats = g, br  # swap in rebuilt tables
-                _last_change = time.time()
-                logger.info("draft stats refreshed: %d matches, %d bracket(s)", g.n, len(br))
+                _engine.stats, _engine.bracket_stats = g, br
+                logger.info("draft stats rebuilt: %d matches, %d bracket(s)", g.n, len(br))
             if settings.model_url and _engine is not None:
                 if await loop.run_in_executor(None, sync.sync_model, settings.model_url):
                     _engine.model = await loop.run_in_executor(None, WinProbModel)  # atomic swap
@@ -115,6 +130,8 @@ async def lifespan(app: FastAPI):
         _last_check = _last_change = time.time()
     if settings.model_url:
         await loop.run_in_executor(None, sync.sync_model, settings.model_url)
+    if settings.stats_url:
+        await loop.run_in_executor(None, sync.sync_stats, settings.stats_url)
     g, br = _build_stats()
     _engine = DraftEngine(g, WinProbModel(), bracket_stats=br)
     if settings.player_tag:
@@ -133,7 +150,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             _engine.roster, _engine.roster_name = None, ""
     task = None
-    if (settings.data_url or settings.model_url) and settings.refresh_seconds > 0:
+    if (settings.data_url or settings.model_url or settings.stats_url) and settings.refresh_seconds > 0:
         task = asyncio.create_task(_refresh_loop())
     try:
         yield

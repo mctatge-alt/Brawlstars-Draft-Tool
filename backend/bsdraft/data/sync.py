@@ -31,6 +31,10 @@ MODEL_PATH = PROCESSED_DIR / "winprob.npz"
 _MODEL_ETAG_PATH = PROCESSED_DIR / ".winprob.etag"
 _MODEL_SHA_PATH = PROCESSED_DIR / ".winprob.sha"
 
+STATS_PATH = PROCESSED_DIR / "stats.json"
+_STATS_ETAG_PATH = PROCESSED_DIR / ".stats.etag"
+_STATS_SHA_PATH = PROCESSED_DIR / ".stats.sha"
+
 
 def _read(path: Path) -> str:
     try:
@@ -96,3 +100,10 @@ def sync_model(url: str, timeout: float = 60.0) -> bool:
     """Refresh the local win-prob model (winprob.npz) from ``url``. Returns True iff it changed,
     so the caller can reload and hot-swap the served model."""
     return _sync_file(url, MODEL_PATH, _MODEL_ETAG_PATH, _MODEL_SHA_PATH, timeout, "model")
+
+
+def sync_stats(url: str, timeout: float = 60.0) -> bool:
+    """Refresh the precomputed empirical stats (stats.json) from ``url``. Returns True iff it
+    changed, so the caller can reload and hot-swap the served stats — no in-memory rebuild from
+    the full match dataset (which OOMs a small instance as the data grows)."""
+    return _sync_file(url, STATS_PATH, _STATS_ETAG_PATH, _STATS_SHA_PATH, timeout, "stats")

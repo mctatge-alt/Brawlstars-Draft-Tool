@@ -23,6 +23,11 @@ services:
         value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/matches.jsonl.gz
       - key: MODEL_URL
         value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/winprob.npz
+      # Precomputed stats artifact (built off-box from ALL matches). When set, the API loads
+      # these instead of rebuilding in memory — so it uses the whole dataset with no OOM, and
+      # STATS_MAX_MATCHES below applies only to the fallback rebuild if this artifact can't load.
+      - key: STATS_URL
+        value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/stats.json.gz
       - key: REFRESH_SECONDS
         value: "600"
       # Cap the stats build to the most recent N matches so it fits the 512 MB free tier as the
