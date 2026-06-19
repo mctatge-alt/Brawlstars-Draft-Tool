@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # retrain (e.g. after a balance shift) rolls out live instead of waiting for a redeploy.
     model_url: str = ""
     refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
+    # Comma-separated allowed CORS origins. "*" allows any (fine for the read-only meta API).
+    # Lock this to your site's origin on the roster host you expose via the tunnel, e.g.
+    # CORS_ORIGINS=https://brawlstars-draft-tool.pages.dev
+    cors_origins: str = "*"
 
     # Engine tuning
     stats_halflife_days: float = 21.0  # recency half-life (days) for empirical stats; <=0 disables decay
@@ -48,6 +52,10 @@ class Settings(BaseSettings):
     # tabs) don't each hit the live Supercell API. Keep it well below the poll interval so a
     # poll still refreshes. 0 disables caching (every request fetches live).
     roster_ttl_seconds: int = 90
+
+    @property
+    def cors_origin_list(self):
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()] or ["*"]
 
     @property
     def seed_countries(self):

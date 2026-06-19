@@ -252,16 +252,21 @@ export default function DraftBoard() {
     }
   }, []);
 
+  // Personalize to whichever tag the visitor confirms in the rank widget (live roster fetch,
+  // so it works for any valid tag — not gated on being in our dataset). null falls back to the
+  // server's configured tag, which is how the local app personalizes out of the box.
+  const rosterTag = rankInfo?.tag ?? null;
+
   // The roster (owned brawlers + loadout/mastery) only changes when the player unlocks or
-  // upgrades something, so a one-shot fetch can go stale in a long session. Re-poll it on an
-  // interval and when the tab regains focus; the backend caches it briefly, so this stays
-  // cheap on the live API.
+  // upgrades something, so a one-shot fetch can go stale in a long session. Refetch when the
+  // visitor's tag changes, then re-poll on an interval and when the tab regains focus; the
+  // backend caches it briefly, so this stays cheap on the live API.
   useEffect(() => {
     let cancelled = false;
     let last = 0;
     const pull = () => {
       last = Date.now();
-      getRoster().then((r) => { if (!cancelled) setRoster(r); }).catch(() => {});
+      getRoster(rosterTag).then((r) => { if (!cancelled) setRoster(r); }).catch(() => {});
     };
     pull();
     const id = setInterval(pull, ROSTER_POLL_MS);
@@ -270,7 +275,7 @@ export default function DraftBoard() {
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => { cancelled = true; clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
-  }, []);
+  }, [rosterTag]);
 
   const byId = useMemo(() => {
     const m = new Map<number, Brawler>();

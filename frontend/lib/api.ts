@@ -71,6 +71,10 @@ export type RecommendBody = {
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+// Roster needs a live Supercell call, which only works from an IP whitelisted with the key.
+// Point this at a whitelisted host (e.g. a Cloudflare Tunnel to the home machine) to enable
+// per-visitor personalization on the public site; defaults to the main API otherwise.
+const ROSTER_BASE = process.env.NEXT_PUBLIC_ROSTER_BASE || API_BASE;
 
 export async function getReference(): Promise<Reference> {
   const res = await fetch(`${API_BASE}/api/reference`);
@@ -96,8 +100,9 @@ export async function getRank(tag: string): Promise<RankInfo> {
   return res.json();
 }
 
-export async function getRoster(): Promise<RosterResponse> {
-  const res = await fetch(`${API_BASE}/api/roster`);
+export async function getRoster(tag?: string | null): Promise<RosterResponse> {
+  const qs = tag ? `?tag=${encodeURIComponent(tag)}` : "";
+  const res = await fetch(`${ROSTER_BASE}/api/roster${qs}`);
   if (!res.ok) throw new Error(`roster: ${res.status}`);
   return res.json();
 }

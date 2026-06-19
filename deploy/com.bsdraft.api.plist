@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent: run the API on the home machine so a Cloudflare Tunnel can expose its
+  /api/roster to the live site. This is the ONLY instance that can fetch a visitor's live
+  roster, because its outbound IP is the one whitelisted with your Supercell key.
+
+  1. Replace every /ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool below with your repo's real path.
+  2. cp deploy/com.bsdraft.api.plist ~/Library/LaunchAgents/com.bsdraft.api.plist
+  3. launchctl load ~/Library/LaunchAgents/com.bsdraft.api.plist     # start
+     launchctl unload ~/Library/LaunchAgents/com.bsdraft.api.plist   # stop
+  4. Verify: curl 'http://127.0.0.1:8000/api/roster?tag=YOURTAG'  ->  {"loaded":true,...}
+
+  Binds to 127.0.0.1 only (not the LAN) — the tunnel reaches it locally. CORS is locked to
+  the Pages origin so only your site can call it. Serves stats from local ./data (no DATA_URL
+  needed); the meta/recommend API stays on Render.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bsdraft.api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/.venv/bin/uvicorn</string>
+    <string>bsdraft.api.main:app</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8000</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>backend</string>
+    <key>CORS_ORIGINS</key>
+    <string>https://brawlstars-draft-tool.pages.dev</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/data/raw/api.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/data/raw/api.err.log</string>
+</dict>
+</plist>

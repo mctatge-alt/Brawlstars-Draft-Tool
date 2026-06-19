@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent: keep the Cloudflare Tunnel up so roster.<DOMAIN> always routes to the
+  home API. Set up the tunnel first (deploy/roster-tunnel.md) and fill deploy/cloudflared.yml.
+
+  1. Replace /ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool and /PATH/TO/cloudflared below.
+     Find cloudflared with:  which cloudflared   (Apple Silicon: /opt/homebrew/bin/cloudflared)
+  2. cp deploy/com.bsdraft.tunnel.plist ~/Library/LaunchAgents/com.bsdraft.tunnel.plist
+  3. launchctl load ~/Library/LaunchAgents/com.bsdraft.tunnel.plist     # start
+     launchctl unload ~/Library/LaunchAgents/com.bsdraft.tunnel.plist   # stop
+  4. Verify: curl 'https://roster.<DOMAIN>/api/roster?tag=YOURTAG'  ->  {"loaded":true,...}
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bsdraft.tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/PATH/TO/cloudflared</string>
+    <string>tunnel</string>
+    <string>--config</string>
+    <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/deploy/cloudflared.yml</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/data/raw/tunnel.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool/data/raw/tunnel.err.log</string>
+</dict>
+</plist>
