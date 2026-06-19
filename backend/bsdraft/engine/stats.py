@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from bsdraft.data import reference as R
-from bsdraft.data.dataset import iter_matches
+from bsdraft.data.dataset import iter_matches, recent_matches
 from bsdraft.engine.tiers import match_bracket
 
 PRIOR = 20.0                   # pseudo-games at 0.5 used for smoothing
@@ -151,11 +151,19 @@ def build_bracketed(
     halflife_days: float = DEFAULT_HALFLIFE_DAYS,
     min_matches: int = MIN_BRACKET_MATCHES,
     matches: Optional[Iterable[dict]] = None,
+    max_matches: int = 0,
 ) -> Tuple["DraftStats", Dict[str, "DraftStats"]]:
     """Build the global stats plus a per-rank-bracket table for each bracket with enough
     matches. Each bracket table shrinks toward the global one, so thin cells stay sensible
-    instead of going noisy. Returns ``(global_stats, {bracket: stats})``."""
-    rows = list(matches if matches is not None else iter_matches())
+    instead of going noisy. ``max_matches`` caps the build to the most recent N matches
+    (bounded-memory load) so peak RAM stays flat on a small instance as the dataset grows;
+    0 = use all. Returns ``(global_stats, {bracket: stats})``."""
+    if matches is not None:
+        rows = list(matches)
+    elif max_matches and max_matches > 0:
+        rows = recent_matches(max_matches)
+    else:
+        rows = list(iter_matches())
     global_stats = DraftStats(rows, halflife_days=halflife_days)
     counts = Counter(b for b in (match_bracket(r) for r in rows if r.get("a_won") is not None) if b)
     brackets = {

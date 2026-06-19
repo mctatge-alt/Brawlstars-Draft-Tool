@@ -51,7 +51,8 @@ def _build_stats():
     """Build global stats + per-rank-bracket tables with the configured recency half-life.
     Used at startup and on every live refresh, so both weight the meta identically.
     Returns ``(global_stats, {bracket: stats})``."""
-    return build_bracketed(halflife_days=settings.stats_halflife_days)
+    return build_bracketed(halflife_days=settings.stats_halflife_days,
+                           max_matches=settings.stats_max_matches)
 
 
 def _rank_index():

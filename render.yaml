@@ -25,3 +25,7 @@ services:
         value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/winprob.npz
       - key: REFRESH_SECONDS
         value: "600"
+      # Cap the stats build to the most recent N matches so it fits the 512 MB free tier as the
+      # dataset grows (the crawler keeps adding). Lower this if it still OOMs; 0 = use all.
+      - key: STATS_MAX_MATCHES
+        value: "60000"

@@ -47,6 +47,11 @@ class Settings(BaseSettings):
 
     # Engine tuning
     stats_halflife_days: float = 21.0  # recency half-life (days) for empirical stats; <=0 disables decay
+    # Cap the empirical-stats build to the most recent N matches (0 = all). Bounds peak RAM so
+    # the build fits a small instance (e.g. Render's 512 MB) as the crawler grows the dataset;
+    # recency weighting already makes older matches near-weightless, so this barely moves the
+    # numbers. Lower it if the host still OOMs; raise/zero it on a bigger box.
+    stats_max_matches: int = 60000
     # The frontend re-polls the roster so a long session picks up newly unlocked/upgraded
     # brawlers. Serve a cached roster for this many seconds so that polling (and multiple
     # tabs) don't each hit the live Supercell API. Keep it well below the poll interval so a

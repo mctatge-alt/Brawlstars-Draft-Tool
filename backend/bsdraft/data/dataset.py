@@ -45,6 +45,26 @@ def iter_matches(path: Optional[Path] = None) -> Iterator[dict]:
                     continue
 
 
+def recent_matches(n: int, path: Optional[Path] = None) -> list:
+    """The ``n`` most-recent matches (by ``ts``), loaded with bounded memory via a size-``n``
+    min-heap — so the stats build's peak RAM stays flat as the dataset grows past what a small
+    instance (e.g. Render's 512 MB free tier) can hold. ``n <= 0`` loads everything."""
+    if not n or n <= 0:
+        return list(iter_matches(path))
+    import heapq
+    from itertools import count
+    tie = count()                       # unique tiebreak so dicts are never compared
+    heap: list = []                     # (ts, tiebreak, match) — keeps the n largest ts
+    for r in iter_matches(path):
+        item = (int(r.get("ts") or 0), next(tie), r)
+        if len(heap) < n:
+            heapq.heappush(heap, item)
+        elif item[0] > heap[0][0]:
+            heapq.heapreplace(heap, item)
+    heap.sort()
+    return [r for _, _, r in heap]
+
+
 def build_dataset(path: Optional[Path] = None, ranked_maps_only: bool = True) -> Dataset:
     bidx = E.brawler_encoder()
     a_rows, b_rows, maps, modes, ys, tss, qs = [], [], [], [], [], [], []
