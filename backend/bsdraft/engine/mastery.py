@@ -42,13 +42,17 @@ class Mastery:
 
     @property
     def score(self) -> float:
-        power = self.power / 11.0
-        return max(0.0, min(1.0, 0.45 * power + 0.35 * self.comfort + 0.20 * self.build))
+        # Ranked normalizes every brawler to power 11, so the *power level* doesn't affect
+        # in-match strength — what the player actually controls is the loadout (you can only
+        # equip the star powers / gadgets / gears / buffies you own) and how much they've
+        # played the brawler. So the investment score is loadout-forward, comfort second, and
+        # power is deliberately left out (a maxed but under-built brawler is still under-built).
+        return max(0.0, min(1.0, 0.60 * self.build + 0.40 * self.comfort))
 
     def gaps(self) -> List[str]:
+        # Power level is intentionally omitted: Ranked maxes it to 11, so it's never a real gap
+        # there — only the owned loadout is.
         out: List[str] = []
-        if self.power < 11:
-            out.append(f"power {self.power}")
         if not self.has_starpower:
             out.append("no star power")
         if not self.has_gadget:

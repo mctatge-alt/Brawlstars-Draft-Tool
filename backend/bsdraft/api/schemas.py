@@ -6,6 +6,12 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel
 
 
+class OwnedBrawler(BaseModel):
+    id: int
+    mastery: float
+    gaps: List[str] = []
+
+
 class RecommendRequest(BaseModel):
     map_id: int
     mode: str
@@ -19,6 +25,10 @@ class RecommendRequest(BaseModel):
     use_search: bool = False     # seat-aware minimax lookahead
     personalize: bool = False    # weight by the player's roster / mastery
     personal_tag: Optional[str] = None   # fold in this player's own win rates (resolved from data)
+    # The player's roster (owned brawlers + mastery + loadout gaps), sent by the client so the
+    # public backend can personalize despite being unable to fetch it itself (IP-locked out of
+    # Supercell). Used only when ``personalize`` is set; falls back to the server's own roster.
+    roster: Optional[List[OwnedBrawler]] = None
     top: int = 8
 
 
@@ -142,12 +152,6 @@ class ReferenceResponse(BaseModel):
     maps: List[MapRef]
     modes: List[str]
     brackets: List[str] = []     # rank brackets with enough data to condition on
-
-
-class OwnedBrawler(BaseModel):
-    id: int
-    mastery: float
-    gaps: List[str] = []
 
 
 class RosterResponse(BaseModel):

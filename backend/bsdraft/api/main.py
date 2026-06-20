@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -339,6 +339,31 @@ def top_picks(req: S.TopPicksRequest):
     )
 
 
+class _ReqMastery:
+    """Lite stand-in for :class:`engine.mastery.Mastery` built from a client-sent roster entry —
+    exposes just the ``.score`` and ``.gaps()`` that scoring reads. Lets the public backend
+    personalize from a roster the client fetched (via the keyed tunnel) but the backend can't."""
+    __slots__ = ("score", "_gaps")
+
+    def __init__(self, score: float, gaps: List[str]):
+        self.score = max(0.0, min(1.0, float(score)))
+        self._gaps = list(gaps or [])
+
+    def gaps(self) -> List[str]:
+        return self._gaps
+
+
+def _roster_for(req: S.RecommendRequest):
+    """Roster dict ``{brawler_id: mastery-like}`` to personalize against, or None. Prefers the
+    client-sent roster (the only source on the public host), then the server's own roster
+    (local/home, where the IP-locked key can fetch it). Returns None unless ``personalize`` is set."""
+    if not req.personalize:
+        return None
+    if req.roster:
+        return {e.id: _ReqMastery(e.mastery, e.gaps) for e in req.roster}
+    return _engine.roster or None
+
+
 @app.post("/api/recommend", response_model=S.RecommendResponse)
 def recommend(req: S.RecommendRequest):
     state = DraftState(
@@ -346,7 +371,7 @@ def recommend(req: S.RecommendRequest):
         our_team=list(req.our_team), their_team=list(req.their_team), bans=list(req.bans),
         we_pick_first=req.we_pick_first, solo_queue=req.solo_queue, rank_bracket=req.rank_bracket,
     )
-    roster = _engine.roster if (req.personalize and _engine.roster) else None
+    roster = _roster_for(req)
     composition = _engine.composition(state)
     warnings = _engine.composition_report(state)["warnings"]
     game_plan = S.GamePlan(**_engine.game_plan(state))

@@ -68,6 +68,9 @@ export type RecommendBody = {
   map_id: number; mode: string; our_team: number[]; their_team: number[]; bans: number[];
   we_pick_first: boolean; solo_queue: boolean; rank_bracket?: string | null; phase: "pick" | "ban";
   use_search: boolean; personalize: boolean; personal_tag?: string | null; top: number;
+  // The player's owned brawlers + mastery + loadout gaps, sent so the public backend (which can't
+  // fetch the roster itself — IP-locked out of Supercell) can personalize the suggestions.
+  roster?: OwnedBrawler[] | null;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";

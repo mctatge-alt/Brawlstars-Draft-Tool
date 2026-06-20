@@ -338,14 +338,18 @@ export default function DraftBoard() {
 
   useEffect(() => {
     if (!mapId || !mode) return;
+    const usePersonal = personalize && personalizeReady;
     const body = {
       map_id: mapId, mode,
       our_team: our.filter((x): x is number => x != null),
       their_team: blindPick ? [] : their.filter((x): x is number => x != null),
       bans: bans.filter((x): x is number => x != null),
       we_pick_first: wePickFirst, solo_queue: solo, phase,
-      use_search: blindPick ? false : useSearch, personalize: personalize && personalizeReady,
+      use_search: blindPick ? false : useSearch, personalize: usePersonal,
       personal_tag: personalTag,
+      // Ship the roster so the backend can actually personalize (it can't fetch it itself).
+      // Without this the suggestions stay the pure meta even with Personalize on.
+      roster: usePersonal ? roster?.owned ?? null : null,
       rank_bracket: bracket, top: 12,
     };
     setLoading(true);
@@ -356,7 +360,7 @@ export default function DraftBoard() {
         .finally(() => setLoading(false));
     }, 120);
     return () => clearTimeout(t);
-  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, bracket, personalTag, blindPick]);
+  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, roster, bracket, personalTag, blindPick]);
 
   // "Full-loadout" rail: strongest picks for the current board with no roster — the pure
   // population meta. It re-ranks as the draft fills in (used brawlers drop out, synergy/
