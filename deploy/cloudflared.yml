@@ -11,11 +11,16 @@ tunnel: 568ba9ff-ecab-4e90-b180-33629771225e
 credentials-file: /Users/mitchelltatge/.cloudflared/568ba9ff-ecab-4e90-b180-33629771225e.json
 
 ingress:
-  # Expose ONLY the roster endpoint to the public internet; the rest of the home API
-  # (recommend, top_picks, reference…) stays unreachable through the tunnel — those are
-  # served by Render. Defense in depth on top of the locked CORS origin.
+  # Expose ONLY the live per-visitor endpoints (roster + rank) to the public internet; the
+  # rest of the home API (recommend, top_picks, reference…) stays unreachable through the
+  # tunnel — those are served by Render. Defense in depth on top of the locked CORS origin.
   - hostname: roster.brawldraft.com
     path: ^/api/roster
+    service: http://127.0.0.1:8000
+  # Current Ranked tier needs the IP-locked key too (live battle-log lookup), so it rides the
+  # same keyed tunnel; without this rule the frontend's getRank would 404 here.
+  - hostname: roster.brawldraft.com
+    path: ^/api/rank
     service: http://127.0.0.1:8000
   - hostname: roster.brawldraft.com
     service: http_status:404
