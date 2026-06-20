@@ -68,6 +68,10 @@ type Step =
 const BAN_N = 6, TEAM_N = 3;
 const ROSTER_POLL_MS = 5 * 60 * 1000; // re-check the player's roster/inventory every 5 min
 const PICK_ORDER = [0, 1, 1, 0, 0, 1]; // 1-2-2-1 snake; 0 = first-pick team
+// Ranks that draft "blind": a shared ban phase, then you pick your own team without ever
+// seeing the enemy's picks — no visible snake, no counter-picking. In Brawl Stars this is
+// Diamond and below; Mythic and up get the full reveal-and-counter draft.
+const BLIND_PICK_BRACKETS = new Set(["Bronze", "Silver", "Gold", "Diamond"]);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const cssVars = (vars: Record<string, string>) => vars as React.CSSProperties;
 
@@ -284,9 +288,12 @@ export default function DraftBoard() {
   }, [ref]);
   const map = useMemo(() => ref?.maps.find((m) => m.id === mapId) || null, [ref, mapId]);
   const mode = map?.mode || "";
+  // Diamond and below draft blind — drives the board layout (no enemy zone), the pick order
+  // (no snake), and the request (no enemy team, no seat-aware search). Mythic+ keeps the snake.
+  const blindPick = !!(rankInfo?.found && rankInfo.bracket && BLIND_PICK_BRACKETS.has(rankInfo.bracket));
   const used = useMemo(
-    () => new Set([...bans, ...our, ...their].filter((x): x is number => x != null)),
-    [bans, our, their]
+    () => new Set([...bans, ...our, ...(blindPick ? [] : their)].filter((x): x is number => x != null)),
+    [bans, our, their, blindPick]
   );
   const ownedSet = useMemo(() => new Set((roster?.owned || []).map((o) => o.id)), [roster]);
   const personalizeReady = !!roster?.loaded;
@@ -298,7 +305,12 @@ export default function DraftBoard() {
 
   // --- draft order: ban×6 → 1-2-2-1 snake (by first pick). The active slot is the
   //     slot the user clicked if it's still empty, else the next empty slot in order. ---
-  const pickSeq = useMemo(() => pickSlotSequence(wePickFirst), [wePickFirst]);
+  const pickSeq = useMemo(
+    () => blindPick
+      ? Array.from({ length: TEAM_N }, (_, index) => ({ side: "us" as const, zone: "our" as const, index }))
+      : pickSlotSequence(wePickFirst),
+    [blindPick, wePickFirst]
+  );
   const order = useMemo<Slot[]>(() => [
     ...Array.from({ length: BAN_N }, (_, i): Slot => ({ zone: "ban", index: i })),
     ...pickSeq.map((s): Slot => ({ zone: s.zone, index: s.index })),
@@ -315,15 +327,24 @@ export default function DraftBoard() {
   }, [active]);
   const phase: "ban" | "pick" = step.kind === "ban" ? "ban" : "pick";
 
+  // Blind ranks never reveal the enemy: drop any enemy picks carried over from a snake-rank
+  // session so they don't linger on the board, in `used`, or in the request.
+  useEffect(() => {
+    if (blindPick && their.some((x) => x != null)) {
+      setTheir(Array(TEAM_N).fill(null));
+      setActiveOverride(null);
+    }
+  }, [blindPick, their]);
+
   useEffect(() => {
     if (!mapId || !mode) return;
     const body = {
       map_id: mapId, mode,
       our_team: our.filter((x): x is number => x != null),
-      their_team: their.filter((x): x is number => x != null),
+      their_team: blindPick ? [] : their.filter((x): x is number => x != null),
       bans: bans.filter((x): x is number => x != null),
       we_pick_first: wePickFirst, solo_queue: solo, phase,
-      use_search: useSearch, personalize: personalize && personalizeReady,
+      use_search: blindPick ? false : useSearch, personalize: personalize && personalizeReady,
       personal_tag: personalTag,
       rank_bracket: bracket, top: 12,
     };
@@ -335,7 +356,7 @@ export default function DraftBoard() {
         .finally(() => setLoading(false));
     }, 120);
     return () => clearTimeout(t);
-  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, bracket, personalTag]);
+  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, bracket, personalTag, blindPick]);
 
   // "Full-loadout" rail: strongest picks for the current board with no roster — the pure
   // population meta. It re-ranks as the draft fills in (used brawlers drop out, synergy/
@@ -346,7 +367,7 @@ export default function DraftBoard() {
     const body = {
       map_id: mapId, mode,
       our_team: our.filter((x): x is number => x != null),
-      their_team: their.filter((x): x is number => x != null),
+      their_team: blindPick ? [] : their.filter((x): x is number => x != null),
       bans: bans.filter((x): x is number => x != null),
       rank_bracket: bracket, top: 10,
     };
@@ -357,7 +378,7 @@ export default function DraftBoard() {
         .catch(() => { if (!cancelled) setRailOk(false); });
     }, 120);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [mapId, mode, our, their, bans, bracket]);
+  }, [mapId, mode, our, their, bans, bracket, blindPick]);
 
   const setZone = (zone: Zone, idx: number, val: number | null) => {
     const apply = (arr: (number | null)[]) => arr.map((x, i) => (i === idx ? val : x));
@@ -464,12 +485,14 @@ export default function DraftBoard() {
           className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)] ctl">
           {solo ? "Solo queue" : "Premade"}
         </button>
-        <button onClick={() => setUseSearch((v) => !v)}
-          className="text-sm px-3 py-1.5 rounded-md border bg-[var(--panel2)] ctl"
-          style={{ borderColor: useSearch ? "#3ec46d" : "var(--border)", color: useSearch ? "#3ec46d" : "var(--muted)", boxShadow: useSearch ? "0 0 16px -5px #3ec46d, inset 0 0 0 1px #3ec46d33" : undefined }}
-          title="Seat-aware minimax lookahead over the remaining snake">
-          🔮 Deep search {useSearch ? "on" : "off"}
-        </button>
+        {!blindPick && (
+          <button onClick={() => setUseSearch((v) => !v)}
+            className="text-sm px-3 py-1.5 rounded-md border bg-[var(--panel2)] ctl"
+            style={{ borderColor: useSearch ? "#3ec46d" : "var(--border)", color: useSearch ? "#3ec46d" : "var(--muted)", boxShadow: useSearch ? "0 0 16px -5px #3ec46d, inset 0 0 0 1px #3ec46d33" : undefined }}
+            title="Seat-aware minimax lookahead over the remaining snake">
+            🔮 Deep search {useSearch ? "on" : "off"}
+          </button>
+        )}
         <button onClick={() => personalizeReady && setPersonalize((v) => !v)}
           disabled={!personalizeReady}
           className="text-sm px-3 py-1.5 rounded-md border bg-[var(--panel2)] disabled:opacity-40 ctl"
@@ -509,21 +532,34 @@ export default function DraftBoard() {
                   </div>
                 </>
               )}
-              <FirstPickToggle wePickFirst={wePickFirst} onToggle={() => setWePickFirst((v) => !v)} />
+              {blindPick ? (
+                <span className="ml-auto shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
+                  style={{ background: "#6b46d6", boxShadow: "0 8px 20px -8px rgba(107,70,214,0.6), inset 0 1px 0 rgba(255,255,255,0.28)" }}
+                  title="Diamond and below draft blind — a ban phase, then you pick your own team without seeing the enemy's. No snake draft, no counter-picking.">
+                  🙈 Blind pick
+                </span>
+              ) : (
+                <FirstPickToggle wePickFirst={wePickFirst} onToggle={() => setWePickFirst((v) => !v)} />
+              )}
             </div>
             <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Bans</div>
             <div className="flex flex-wrap gap-2 mb-4">
               {bans.map((_, i) => <SlotBox key={i} zone="ban" index={i} accent="#e0566f" />)}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className={`grid grid-cols-1 gap-4 ${blindPick ? "" : "sm:grid-cols-2"}`}>
               <div>
                 <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color: "#5aa0ff" }}>Your team</div>
                 <div className="flex gap-2">{our.map((_, i) => <SlotBox key={i} zone="our" index={i} accent="#3b82f6" />)}</div>
+                {blindPick && (
+                  <div className="text-[11px] text-[var(--muted)] mt-1.5">🙈 Enemy draft is hidden at Diamond — picks optimize your own comp on this map.</div>
+                )}
               </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color: "#ff7a7a" }}>Enemy team</div>
-                <div className="flex gap-2">{their.map((_, i) => <SlotBox key={i} zone="their" index={i} accent="#e0566f" />)}</div>
-              </div>
+              {!blindPick && (
+                <div>
+                  <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color: "#ff7a7a" }}>Enemy team</div>
+                  <div className="flex gap-2">{their.map((_, i) => <SlotBox key={i} zone="their" index={i} accent="#e0566f" />)}</div>
+                </div>
+              )}
             </div>
             {recs?.composition && Object.keys(recs.composition).length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-4 pt-3 border-t border-[var(--border)]">
@@ -600,7 +636,7 @@ export default function DraftBoard() {
             onPick={place} disabled={step.kind === "done"} />
         )}
       </div>
-      {recs?.game_plan && our.some((x) => x != null) && <GamePlanPanel gp={recs.game_plan} />}
+      {recs?.game_plan && our.some((x) => x != null) && <GamePlanPanel gp={recs.game_plan} blind={blindPick} />}
       <footer className="text-center text-xs text-[var(--muted)] mt-6">
         Recommendations fuse a trained win-prob model with empirical map stats · not affiliated with Supercell
       </footer>
@@ -750,7 +786,7 @@ function TopPicksRail({ picks, byId, used, onPick, disabled }: {
   );
 }
 
-function GamePlanPanel({ gp }: { gp: GamePlan }) {
+function GamePlanPanel({ gp, blind }: { gp: GamePlan; blind?: boolean }) {
   const Section = ({ label, color, mark, items }: { label: string; color: string; mark: string; items: string[] }) =>
     items.length === 0 ? null : (
       <div>
@@ -787,7 +823,7 @@ function GamePlanPanel({ gp }: { gp: GamePlan }) {
         <div>
           <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Vs their threats</div>
           <div className="space-y-1.5">
-            {gp.threats.length === 0 && <div className="text-xs text-[var(--muted)]">No enemy picks on the board yet.</div>}
+            {gp.threats.length === 0 && <div className="text-xs text-[var(--muted)]">{blind ? "Enemy draft is hidden in blind pick — focus on your own comp." : "No enemy picks on the board yet."}</div>}
             {gp.threats.map((t) => (
               <div key={t.name} className="text-xs">
                 <span className="font-semibold" style={{ color: CLASS_COLOR[t.cls] || "#aaa" }}>{t.name}</span>
