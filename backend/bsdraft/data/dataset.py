@@ -31,12 +31,20 @@ class Dataset:
         return int(self.y.shape[0])
 
 
-def iter_matches(path: Optional[Path] = None) -> Iterator[dict]:
+def iter_matches(path: Optional[Path] = None, contains: Optional[str] = None) -> Iterator[dict]:
+    """Yield each stored match as a dict. ``contains`` is an optional raw-substring prefilter:
+    lines that don't contain it are skipped *before* ``json.loads``. A normalized player tag is
+    serialized verbatim into the line (see :mod:`bsdraft.collect.match`), so every match a tag
+    appears in must contain it as a substring — passing ``contains=tag`` lets a per-player scan
+    skip parsing the ~99.9% of lines the tag never appears in (seconds saved on the full dataset).
+    The substring test admits rare false positives, so callers still apply an exact check."""
     path = path or (RAW_DIR / "matches.jsonl")
     if not Path(path).exists():
         return  # no data yet (e.g. cloud cold start before the first sync) -> empty iterator
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
+            if contains is not None and contains not in line:
+                continue
             line = line.strip()
             if line:
                 try:

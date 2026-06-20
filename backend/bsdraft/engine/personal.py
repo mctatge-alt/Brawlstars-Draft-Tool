@@ -143,8 +143,10 @@ def build_personal_stats(
     if not tag_n:
         return None
     # Stream-filter to just this player's games (bounded memory) instead of materializing the
-    # whole dataset — PersonalStats only ever uses matches the tag appears in.
-    rows = [r for r in iter_matches() if tag_n in (r.get("player_tags") or ())]
+    # whole dataset — PersonalStats only ever uses matches the tag appears in. The raw-substring
+    # prefilter (contains=tag_n) skips json.loads on every line the tag doesn't appear in; the
+    # exact membership check then drops the rare line where tag_n is only a substring.
+    rows = [r for r in iter_matches(contains=tag_n) if tag_n in (r.get("player_tags") or ())]
     if extra_matches:
         rows.extend(extra_matches)
     ps = PersonalStats(tag_n, rows, fallback=fallback, halflife_days=halflife_days)

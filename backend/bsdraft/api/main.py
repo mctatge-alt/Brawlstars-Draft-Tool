@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -45,6 +46,8 @@ _last_change: float = 0.0  # epoch of the last actual data change
 _meta_cache = None         # (data_version, MetaReport); recomputed lazily when data changes
 _rank_idx_cache = None     # (data_version, {tag: (ts, tier)}); recomputed lazily when data changes
 _personal_cache: dict = {} # tag -> (data_version, PersonalStats|None); rebuilt when data changes
+_personal_locks: dict = {} # tag -> Lock; single-flights the per-tag dataset scan (no stampede)
+_personal_locks_guard = threading.Lock()
 _roster_cache: dict = {}   # normalized tag -> (fetched_at, RosterResponse); short TTL spares the live API
 _rank_cache: dict = {}     # normalized tag -> (fetched_at, RankResponse); short TTL on live rank lookups
 
@@ -81,11 +84,23 @@ def _personal_for(tag: Optional[str]):
     hit = _personal_cache.get(t)
     if hit is not None and hit[0] == _last_change:
         return hit[1]
-    if len(_personal_cache) > 256:   # simple bound — tags are cheap to rebuild
-        _personal_cache.clear()
-    ps = build_personal_stats(t, fallback=_engine.stats)
-    _personal_cache[t] = (_last_change, ps)
-    return ps
+    # Building scans the dataset for this tag's games (seconds on the full cloud dataset). Single-
+    # flight per tag so a burst of requests for the same uncached tag — rapid picks, the frontend
+    # re-polling, multiple tabs — waits on one build instead of each launching its own redundant
+    # scan (a cache stampede; the cache is only written once the scan finishes).
+    with _personal_locks_guard:
+        if len(_personal_locks) > 512:   # bound growth — one tiny Lock per unique tag
+            _personal_locks.clear()
+        lock = _personal_locks.setdefault(t, threading.Lock())
+    with lock:
+        hit = _personal_cache.get(t)     # another thread may have built it while we waited
+        if hit is not None and hit[0] == _last_change:
+            return hit[1]
+        if len(_personal_cache) > 256:   # simple bound — tags are cheap to rebuild
+            _personal_cache.clear()
+        ps = build_personal_stats(t, fallback=_engine.stats)
+        _personal_cache[t] = (_last_change, ps)
+        return ps
 
 
 async def _refresh_loop() -> None:
@@ -332,7 +347,6 @@ def recommend(req: S.RecommendRequest):
         we_pick_first=req.we_pick_first, solo_queue=req.solo_queue, rank_bracket=req.rank_bracket,
     )
     roster = _engine.roster if (req.personalize and _engine.roster) else None
-    personal = _personal_for(req.personal_tag)
     composition = _engine.composition(state)
     warnings = _engine.composition_report(state)["warnings"]
     game_plan = S.GamePlan(**_engine.game_plan(state))
@@ -345,6 +359,10 @@ def recommend(req: S.RecommendRequest):
             composition=composition, warnings=warnings, game_plan=game_plan, next_to_act=next_to_act,
         )
 
+    # Personal win-rate signal — only feeds pick scoring, and the build scans the dataset, so don't
+    # pay for it during the ban phase (the result would be discarded there) — that scan, fired on
+    # every ban placement, was the bulk of the blind-pick "analyzing…" stall before the first pick.
+    personal = _personal_for(req.personal_tag)
     can_search = req.use_search and _engine.model and _engine.model.available and state.our_slots_left > 0
     if can_search:
         picks = []
