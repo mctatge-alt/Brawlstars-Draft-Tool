@@ -46,6 +46,7 @@ _meta_cache = None         # (data_version, MetaReport); recomputed lazily when 
 _rank_idx_cache = None     # (data_version, {tag: (ts, tier)}); recomputed lazily when data changes
 _personal_cache: dict = {} # tag -> (data_version, PersonalStats|None); rebuilt when data changes
 _roster_cache: dict = {}   # normalized tag -> (fetched_at, RosterResponse); short TTL spares the live API
+_rank_cache: dict = {}     # normalized tag -> (fetched_at, RankResponse); short TTL on live rank lookups
 
 
 def _build_stats():
@@ -247,30 +248,52 @@ async def roster(tag: Optional[str] = None):
         return S.RosterResponse(loaded=False, tag=t, name="", error=str(e))
 
 
+async def _live_rank(tag_n: str) -> Optional[S.RankResponse]:
+    """Current Ranked tier from a live battle-log fetch (needs the IP-locked key, so it only
+    works local/home or via the keyed tunnel). Returns None when the lookup can't be served or
+    the player has no recent ranked games, so the caller can fall back to the dataset. Cached
+    briefly (``roster_ttl_seconds``) so the frontend re-polling the same tag spares the live API."""
+    hit = _rank_cache.get(tag_n)
+    if hit is not None and (time.time() - hit[0]) < settings.roster_ttl_seconds:
+        return hit[1]
+    try:
+        async with BrawlStarsClient() as client:
+            battles = await client.get_battlelog(tag_n)
+        t = latest_ranked_tier(battles, tag_n)
+    except Exception:  # noqa: BLE001 — keyless/offline host or API hiccup; fall back to the dataset
+        return None
+    if not t:
+        return None
+    resp = S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
+                          bracket=bracket_of_tier(t), source="live")
+    _rank_cache[tag_n] = (time.time(), resp)
+    return resp
+
+
 @app.get("/api/rank", response_model=S.RankResponse)
 async def rank(tag: str):
-    """Resolve a player's current Ranked tier — from our collected match data first (no API
-    key needed, works on the public host), then a live battle-log fetch when a valid key is
-    configured (local/home)."""
+    """Resolve a player's current Ranked tier. We try a live battle-log fetch first whenever a
+    key is configured (local/home, or the keyed roster tunnel), because that's the player's tier
+    *right now* — the collected match data is a crawl snapshot that goes stale across a Ranked
+    season reset, where a player can drop several tiers, so a pre-reset row over-states them. The
+    dataset is the fallback: it needs no key (the only source on the public host) and covers
+    players with no recent ranked games."""
     tag_n = normalize_tag(tag)
     if not tag_n:
         return S.RankResponse(found=False, tag="", error="enter a player tag")
+    if settings.brawlstars_api_token:
+        live = await _live_rank(tag_n)
+        if live is not None:
+            return live
     hit = _rank_index().get(tag_n)
     if hit:
         t = hit[1]
         return S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
                               bracket=bracket_of_tier(t), source="dataset")
-    try:
-        async with BrawlStarsClient() as client:
-            battles = await client.get_battlelog(tag_n)
-        t = latest_ranked_tier(battles, tag_n)
-        if t:
-            return S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
-                                  bracket=bracket_of_tier(t), source="live")
-        return S.RankResponse(found=False, tag=tag_n, error="no recent ranked games found")
-    except Exception:
-        return S.RankResponse(found=False, tag=tag_n,
-                              error="not in our data, and live lookup isn't available here")
+    return S.RankResponse(
+        found=False, tag=tag_n,
+        error="no recent ranked games found" if settings.brawlstars_api_token
+        else "not in our data, and live lookup isn't available here")
 
 
 @app.post("/api/top_picks", response_model=S.TopPicksResponse)

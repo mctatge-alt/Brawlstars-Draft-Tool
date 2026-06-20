@@ -95,7 +95,10 @@ export async function getMeta(): Promise<Meta> {
 }
 
 export async function getRank(tag: string): Promise<RankInfo> {
-  const res = await fetch(`${API_BASE}/api/rank?tag=${encodeURIComponent(tag)}`);
+  // Through ROSTER_BASE (the keyed tunnel), not API_BASE: a live battle-log lookup gives the
+  // player's *current* tier, whereas the keyless API can only return the crawl snapshot, which
+  // goes stale across a Ranked season reset. Falls back to API_BASE when no tunnel is set.
+  const res = await fetch(`${ROSTER_BASE}/api/rank?tag=${encodeURIComponent(tag)}`);
   if (!res.ok) throw new Error(`rank: ${res.status}`);
   return res.json();
 }
