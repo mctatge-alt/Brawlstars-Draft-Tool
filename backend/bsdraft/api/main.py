@@ -242,6 +242,8 @@ async def roster(tag: Optional[str] = None):
         _engine.roster, _engine.roster_name = r, name
         owned = [S.OwnedBrawler(id=bid, mastery=round(m.score, 3), gaps=m.gaps()) for bid, m in r.items()]
         resp = S.RosterResponse(loaded=True, tag=t, name=name, owned=owned)
+        if len(_roster_cache) > 512:   # bound growth — one entry per unique tag, TTL alone never frees it
+            _roster_cache.clear()
         _roster_cache[key] = (time.time(), resp)  # cache only successful loads; errors retry next poll
         return resp
     except Exception as e:  # noqa: BLE001
@@ -266,6 +268,8 @@ async def _live_rank(tag_n: str) -> Optional[S.RankResponse]:
         return None
     resp = S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
                           bracket=bracket_of_tier(t), source="live")
+    if len(_rank_cache) > 512:   # bound growth — one entry per unique tag, TTL alone never frees it
+        _rank_cache.clear()
     _rank_cache[tag_n] = (time.time(), resp)
     return resp
 

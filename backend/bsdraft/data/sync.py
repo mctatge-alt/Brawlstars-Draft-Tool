@@ -12,9 +12,9 @@ leaves the last-good local copy in place (returns False rather than raising).
 """
 from __future__ import annotations
 
-import gzip
 import hashlib
 import logging
+import zlib
 from pathlib import Path
 
 import httpx
@@ -43,18 +43,18 @@ def _read(path: Path) -> str:
         return ""
 
 
-def _decompress(raw: bytes) -> bytes:
-    """Gunzip if gzip-framed, else pass through (so a URL may point at .gz or the raw file;
-    winprob.npz is zip-framed, not gzip, so it passes through untouched)."""
-    return gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw
-
-
 def _sync_file(url: str, dest: Path, etag_path: Path, sha_path: Path,
                timeout: float, label: str) -> bool:
     """Refresh ``dest`` from ``url`` if it changed. Returns True iff the local copy was
     rewritten. Conditional GET (ETag) skips the download when nothing changed; a content hash
     skips the rewrite when the bytes are identical; any network/HTTP failure leaves the
-    last-good local copy in place (returns False, never raises)."""
+    last-good local copy in place (returns False, never raises).
+
+    The response is **streamed** straight to disk, gunzipping on the fly when gzip-framed (a URL
+    may point at .gz or the raw file; winprob.npz is zip-framed, not gzip, so it passes through
+    untouched). This keeps peak RAM at one chunk rather than the whole file — matches.jsonl is
+    >130 MB decompressed, and holding it (plus zlib's scratch buffers) in memory was blowing the
+    512 MB free-tier limit on every hourly refresh."""
     if not url:
         return False
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -64,30 +64,52 @@ def _sync_file(url: str, dest: Path, etag_path: Path, sha_path: Path,
     if etag and dest.exists():
         headers["If-None-Match"] = etag
 
+    tmp = dest.parent / (dest.name + ".tmp")
+    hasher = hashlib.sha256()       # over the *decompressed* bytes, matching the stored .sha
+    new_etag = ""
     try:
         with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-            resp = client.get(url, headers=headers)
-        if resp.status_code == 304:
-            return False
-        resp.raise_for_status()
-        data = _decompress(resp.content)
+            with client.stream("GET", url, headers=headers) as resp:
+                if resp.status_code == 304:
+                    return False
+                resp.raise_for_status()
+                new_etag = resp.headers.get("ETag", "")
+                dec = None          # zlib gzip decompressor, created once we see the magic bytes
+                sniffed = False
+                with open(tmp, "wb") as out:
+                    for chunk in resp.iter_bytes(chunk_size=1 << 20):
+                        if not chunk:
+                            continue
+                        if not sniffed:
+                            sniffed = True
+                            if chunk[:2] == b"\x1f\x8b":
+                                dec = zlib.decompressobj(wbits=31)  # 16 + MAX_WBITS = gzip framing
+                        if dec is not None:
+                            chunk = dec.decompress(chunk)
+                        if chunk:
+                            hasher.update(chunk)
+                            out.write(chunk)
+                    if dec is not None:
+                        tail = dec.flush()
+                        if tail:
+                            hasher.update(tail)
+                            out.write(tail)
     except Exception as e:  # noqa: BLE001 — never let a sync failure take down serving
         logger.warning("%s sync failed (%s); keeping last-good copy", label, e)
+        tmp.unlink(missing_ok=True)
         return False
 
-    new_etag = resp.headers.get("ETag", "")
     if new_etag:
         etag_path.write_text(new_etag, encoding="utf-8")
 
-    sha = hashlib.sha256(data).hexdigest()
+    sha = hasher.hexdigest()
     if sha == _read(sha_path) and dest.exists():
+        tmp.unlink(missing_ok=True)
         return False  # bytes identical — nothing downstream to rebuild
 
-    tmp = dest.parent / (dest.name + ".tmp")
-    tmp.write_bytes(data)
     tmp.replace(dest)  # atomic swap on POSIX
     sha_path.write_text(sha, encoding="utf-8")
-    logger.info("%s updated (%.2f MB)", label, len(data) / 1e6)
+    logger.info("%s updated (%.2f MB)", label, dest.stat().st_size / 1e6)
     return True
 
 
