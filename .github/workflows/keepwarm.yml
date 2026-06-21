@@ -21,4 +21,7 @@ jobs:
             echo "RENDER_HEALTH_URL not set — skipping (configure it to enable keep-warm)."
             exit 0
           fi
-          curl -fsS --max-time 30 "$URL" && echo "  …warm"
+          # Cold boot loads the model + ~240k matches and can take ~45s,
+          # so allow generous headroom — a 30s cap was timing out every ping
+          # and the instance never actually got warmed.
+          curl -fsS --max-time 90 "$URL" && echo "  …warm"
