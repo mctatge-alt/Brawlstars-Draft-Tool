@@ -216,6 +216,54 @@ function StatusBanner({ step }: { step: Step }) {
   );
 }
 
+function Spinner() {
+  return (
+    <span
+      className="inline-block w-9 h-9 rounded-full animate-spin"
+      style={{ border: "3px solid var(--border)", borderTopColor: "var(--accent)" }}
+      aria-hidden="true"
+    />
+  );
+}
+
+// Shown while the board's reference data is still loading. On a warm backend this is a sub-
+// second blip (gated behind `show` so it never flashes), but the public API runs on Render's
+// free tier, which spins the dyno down after ~15 min idle and takes ~45s to boot the model +
+// replay stats. Say that, instead of leaving an empty board that reads as broken.
+function BootScreen({ show, error, onRetry }: { show: boolean; error: string | null; onRetry: () => void }) {
+  return (
+    <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
+      <header className="flex flex-wrap items-center gap-3 mb-5 anim-fade-up">
+        <h1 className="text-xl font-bold tracking-tight mr-2">
+          <span className="inline-block floaty mr-1">⚔️</span>
+          <span className="brand-gradient">Brawl Draft</span>{" "}
+          <span className="text-[var(--muted)] font-normal text-sm">ranked assistant</span>
+        </h1>
+      </header>
+      <div className="min-h-[55vh] grid place-items-center">
+        {error ? (
+          <div className="text-center anim-fade-up max-w-sm">
+            <div className="text-2xl mb-3">😕</div>
+            <div className="text-sm font-semibold text-[var(--text)] mb-1">Couldn’t reach the draft server</div>
+            <div className="text-xs text-[var(--muted)] mb-4 break-words">{error}</div>
+            <button onClick={onRetry} className="text-sm px-4 py-2 rounded-md border border-[var(--border)] bg-[var(--panel2)] ctl">
+              Retry
+            </button>
+          </div>
+        ) : show ? (
+          <div className="text-center anim-fade-up">
+            <Spinner />
+            <div className="mt-4 text-sm font-semibold text-[var(--text)]">Waking up the draft server…</div>
+            <div className="mt-1 text-xs text-[var(--muted)] max-w-xs mx-auto">
+              First visit can take ~30–45s on the free tier. Hang tight — it stays fast once it’s warm.
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function DraftBoard() {
   const [ref, setRef] = useState<Reference | null>(null);
   const [roster, setRoster] = useState<RosterResponse | null>(null);
@@ -240,21 +288,51 @@ export default function DraftBoard() {
   const [personalize, setPersonalize] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [bootNonce, setBootNonce] = useState(0);  // bump to re-attempt the first load
+  const [slowBoot, setSlowBoot] = useState(false); // gate the "waking up" screen behind a short delay
 
+  // First load can hit a cold Render free-tier dyno (spun down after ~15 min idle), which takes
+  // ~45s to boot the model + replay stats and may 5xx the first request meanwhile. Retry the
+  // reference — the one fetch the board can't render without — with backoff instead of flashing
+  // an error, and pull the non-critical health/meta only once it's warm so they don't fail and
+  // never recover. Give up after ~90s (matches the keep-warm cap) and surface a retryable error.
   useEffect(() => {
-    getReference().then((r) => {
-      setRef(r);
-      const best = [...r.maps].filter((m) => m.games > 0).sort((a, b) => b.games - a.games)[0] || r.maps[0];
-      if (best) setMapId(best.id);
-    }).catch((e) => setErr(String(e)));
-    getHealth().then(setHealth).catch(() => {});
-    getMeta().then(setMeta).catch(() => {});
+    let cancelled = false;
+    const started = Date.now();
+    (async () => {
+      for (let attempt = 0; !cancelled; attempt++) {
+        try {
+          const r = await getReference();
+          if (cancelled) return;
+          const best = [...r.maps].filter((m) => m.games > 0).sort((a, b) => b.games - a.games)[0] || r.maps[0];
+          setRef(r);
+          if (best) setMapId(best.id);
+          setErr(null);
+          getHealth().then(setHealth).catch(() => {});
+          getMeta().then(setMeta).catch(() => {});
+          return;
+        } catch (e) {
+          if (cancelled) return;
+          if (Date.now() - started > 90_000) { setErr(String(e)); return; }
+          await new Promise((res) => setTimeout(res, Math.min(5000, 800 * (attempt + 1))));
+        }
+      }
+    })();
     const savedTag = localStorage.getItem("bsdraft.tag");
     if (savedTag) {
       setTag(savedTag);
       getRank(savedTag).then(setRankInfo).catch(() => {});
     }
-  }, []);
+    return () => { cancelled = true; };
+  }, [bootNonce]);
+
+  // Don't flash the "waking up" screen on a warm load (~200ms); only reveal it once the boot is
+  // visibly slow, which in practice means the dyno was asleep.
+  useEffect(() => {
+    if (ref || err) { setSlowBoot(false); return; }
+    const t = setTimeout(() => setSlowBoot(true), 500);
+    return () => clearTimeout(t);
+  }, [ref, err, bootNonce]);
 
   // Personalize to whichever tag the visitor confirms in the rank widget (live roster fetch,
   // so it works for any valid tag — not gated on being in our dataset). null falls back to the
@@ -396,6 +474,7 @@ export default function DraftBoard() {
     if (!active || used.has(bid)) return;
     setZone(active.zone, active.index, bid);
     setActiveOverride(null);
+    setQuery("");
   };
 
   const reset = () => {
@@ -426,7 +505,11 @@ export default function DraftBoard() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (ref?.brawlers || [])
-      .filter((b) => !q || b.name.toLowerCase().includes(q))
+      .filter((b) => {
+        if (!q) return true;
+        const name = b.name.toLowerCase();
+        return name.startsWith(q) || name.split(/[\s&.-]+/).some((w) => w.startsWith(q));
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [ref, query]);
 
@@ -469,6 +552,17 @@ export default function DraftBoard() {
     : step.kind === "done" ? "Draft complete"
     : step.side === "us" ? "Your pick — suggestions"
     : "Strong picks here";
+
+  // The board can't render without the reference; block on it (retrying/warming behind the
+  // scenes) rather than laying out an empty board. Everything else loads in progressively.
+  if (!ref)
+    return (
+      <BootScreen
+        show={slowBoot}
+        error={err}
+        onRetry={() => { setErr(null); setSlowBoot(false); setBootNonce((n) => n + 1); }}
+      />
+    );
 
   return (
     <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
@@ -517,7 +611,7 @@ export default function DraftBoard() {
 
       <RankWidget tag={tag} setTag={setTag} rankInfo={rankInfo} loading={rankLoading} onCheck={checkRank} />
 
-      {err && <div className="mb-4 text-sm text-[#e0566f]">API error: {err}. Is the backend running on :8000?</div>}
+      {err && <div className="mb-4 text-sm text-[#e0566f]">Couldn’t fetch suggestions — {err}</div>}
 
       {meta?.shifted && <MetaBanner meta={meta} />}
       <StatusBanner key={step.kind === "pick" ? `pick-${step.side}-${step.slot.index}` : step.kind} step={step} />
@@ -642,7 +736,7 @@ export default function DraftBoard() {
       </div>
       {recs?.game_plan && our.some((x) => x != null) && <GamePlanPanel gp={recs.game_plan} blind={blindPick} />}
       <footer className="text-center text-xs text-[var(--muted)] mt-6">
-        Recommendations fuse a trained win-prob model with empirical map stats · not affiliated with Supercell
+        Recommendations fuse a trained win-prob model with empirical map stats · This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not responsible for it.
       </footer>
     </div>
   );
