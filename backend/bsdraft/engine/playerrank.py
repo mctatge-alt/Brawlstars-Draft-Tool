@@ -3,15 +3,13 @@
 The deployed backend can't reach Supercell (the API key is IP-locked to the home crawler),
 so we first look the tag up in the match data we already collect — every player row carries
 their Ranked tier (see :mod:`bsdraft.engine.tiers`). That covers anyone we've crawled and
-needs no key. When a valid key IS available (local/home), we fall back to a live battle-log
+needs no key. When a valid key IS available (local/home), we fall back to a live profile
 fetch for tags we haven't seen.
 """
 from __future__ import annotations
 
 from typing import Dict, Iterable, Optional, Tuple
 
-from bsdraft.collect.client import normalize_tag
-from bsdraft.collect.match import RANKED_TYPES
 from bsdraft.data.dataset import iter_matches
 
 
@@ -30,18 +28,14 @@ def build_rank_index(matches: Optional[Iterable[dict]] = None) -> Dict[str, Tupl
     return idx
 
 
-def latest_ranked_tier(battles: Iterable[dict], tag: str) -> Optional[int]:
-    """The player's Ranked tier from their most recent ranked battle (the battle log is
-    newest-first), or None. Used for the live fallback."""
-    want = normalize_tag(tag)
-    for entry in battles:
-        battle = entry.get("battle") or {}
-        if battle.get("type") not in RANKED_TYPES:
-            continue
-        for team in battle.get("teams") or []:
-            for p in team:
-                if normalize_tag(p.get("tag", "")) == want:
-                    t = (p.get("brawler") or {}).get("trophies")
-                    if isinstance(t, int) and 1 <= t <= 22:
-                        return t
-    return None
+def current_ranked_tier(player: dict) -> Optional[int]:
+    """The player's *current*-season Ranked tier (1-22) from their profile, or None.
+
+    Read this from the profile's ``rankedRank``, which is the player's tier *right now*.
+    Do **not** infer it from the battle log: a ranked battle's ``trophies`` is the tier the
+    player *entered that match* at, so the most recent game over-states anyone who then lost
+    a promotion game — they show as the tier they'd just reached even though that loss dropped
+    them back down. (``highestSeasonRankedRank`` is the season peak, which is exactly that
+    over-statement, so it's the wrong field for "what am I now".)"""
+    t = player.get("rankedRank")
+    return t if isinstance(t, int) and 1 <= t <= 22 else None

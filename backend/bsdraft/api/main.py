@@ -32,7 +32,7 @@ from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.personal import build_personal_stats, matches_from_battlelog
 from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
-from bsdraft.engine.playerrank import build_rank_index, latest_ranked_tier
+from bsdraft.engine.playerrank import build_rank_index, current_ranked_tier
 from bsdraft.engine.stats import DraftStats, build_bracketed
 from bsdraft.engine.stats_store import load_stats
 from bsdraft.engine.tiers import BRACKETS, bracket_of_tier, tier_label
@@ -266,17 +266,20 @@ async def roster(tag: Optional[str] = None):
 
 
 async def _live_rank(tag_n: str) -> Optional[S.RankResponse]:
-    """Current Ranked tier from a live battle-log fetch (needs the IP-locked key, so it only
-    works local/home or via the keyed tunnel). Returns None when the lookup can't be served or
-    the player has no recent ranked games, so the caller can fall back to the dataset. Cached
-    briefly (``roster_ttl_seconds``) so the frontend re-polling the same tag spares the live API."""
+    """Current Ranked tier from a live profile fetch (needs the IP-locked key, so it only
+    works local/home or via the keyed tunnel). Reads the profile's ``rankedRank`` — the tier
+    the player is at *now* — rather than the battle log, whose per-game tier over-states anyone
+    who lost a promotion game (see :func:`current_ranked_tier`). Returns None when the lookup
+    can't be served or the player hasn't placed this season, so the caller can fall back to the
+    dataset. Cached briefly (``roster_ttl_seconds``) so the frontend re-polling the same tag
+    spares the live API."""
     hit = _rank_cache.get(tag_n)
     if hit is not None and (time.time() - hit[0]) < settings.roster_ttl_seconds:
         return hit[1]
     try:
         async with BrawlStarsClient() as client:
-            battles = await client.get_battlelog(tag_n)
-        t = latest_ranked_tier(battles, tag_n)
+            player = await client.get_player(tag_n)
+        t = current_ranked_tier(player)
     except Exception:  # noqa: BLE001 — keyless/offline host or API hiccup; fall back to the dataset
         return None
     if not t:
@@ -291,12 +294,12 @@ async def _live_rank(tag_n: str) -> Optional[S.RankResponse]:
 
 @app.get("/api/rank", response_model=S.RankResponse)
 async def rank(tag: str):
-    """Resolve a player's current Ranked tier. We try a live battle-log fetch first whenever a
-    key is configured (local/home, or the keyed roster tunnel), because that's the player's tier
-    *right now* — the collected match data is a crawl snapshot that goes stale across a Ranked
-    season reset, where a player can drop several tiers, so a pre-reset row over-states them. The
-    dataset is the fallback: it needs no key (the only source on the public host) and covers
-    players with no recent ranked games."""
+    """Resolve a player's current Ranked tier. We try a live profile fetch first whenever a
+    key is configured (local/home, or the keyed roster tunnel), because its ``rankedRank`` is the
+    player's tier *right now* — the collected match data is a crawl snapshot that goes stale across
+    a Ranked season reset, where a player can drop several tiers, so a pre-reset row over-states
+    them. The dataset is the fallback: it needs no key (the only source on the public host) and
+    covers players with no recent ranked games."""
     tag_n = normalize_tag(tag)
     if not tag_n:
         return S.RankResponse(found=False, tag="", error="enter a player tag")
