@@ -1,0 +1,8 @@
+---
+description: Global project context and rules
+globs: *
+alwaysApply: true
+---
+# Project Context
+
+You must strictly follow the core project instructions, architecture guidelines, and workflows defined in @CLAUDE.md.
