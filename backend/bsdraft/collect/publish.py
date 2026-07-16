@@ -26,6 +26,7 @@ MATCHES_PATH = RAW_DIR / "matches.jsonl"
 GZ_PATH = RAW_DIR / "matches.jsonl.gz"
 MODEL_PATH = PROCESSED_DIR / "winprob.npz"
 STATS_PATH = PROCESSED_DIR / "stats.json.gz"
+RANK_INDEX_PATH = PROCESSED_DIR / "rank_index.json.gz"
 DEFAULT_TAG = "data-latest"
 
 
@@ -86,13 +87,29 @@ def publish_stats(tag: str = DEFAULT_TAG) -> None:
     print(f"published {STATS_PATH.name} ({STATS_PATH.stat().st_size / 1e6:.1f} MB) -> release '{tag}'")
 
 
+def publish_rank_index(tag: str = DEFAULT_TAG) -> None:
+    """Upload the precomputed rank index (rank_index.json.gz) to the release so an API with
+    RANK_INDEX_URL set loads the tag->tier lookup instead of building a ~200 MB dict from the
+    full dataset. Run after scripts/export_rank_index.py (the crawler does this each cycle)."""
+    if not RANK_INDEX_PATH.exists():
+        raise FileNotFoundError(
+            f"No rank index at {RANK_INDEX_PATH} — build it first (scripts/export_rank_index.py).")
+    _ensure_release(tag)
+    res = _gh("release", "upload", tag, str(RANK_INDEX_PATH), "--clobber")
+    if res.returncode != 0:
+        raise RuntimeError(f"gh release upload (rank index) failed: {res.stderr.strip()}")
+    print(f"published {RANK_INDEX_PATH.name} ({RANK_INDEX_PATH.stat().st_size / 1e6:.1f} MB) -> release '{tag}'")
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Publish the dataset and/or model/stats to a GitHub Release.")
+    ap = argparse.ArgumentParser(description="Publish the dataset and/or model/stats/rank index to a GitHub Release.")
     ap.add_argument("--tag", default=DEFAULT_TAG, help="release tag to upload to")
     ap.add_argument("--model", action="store_true", help="also upload winprob.npz (the model)")
     ap.add_argument("--stats", action="store_true", help="also upload stats.json.gz (precomputed stats)")
+    ap.add_argument("--rank", action="store_true", help="also upload rank_index.json.gz (rank index)")
     ap.add_argument("--only-model", action="store_true", help="upload only winprob.npz, not the dataset")
     ap.add_argument("--only-stats", action="store_true", help="upload only stats.json.gz, not the dataset")
+    ap.add_argument("--only-rank", action="store_true", help="upload only rank_index.json.gz, not the dataset")
     args = ap.parse_args()
     if args.only_model:
         publish_model(args.tag)
@@ -100,11 +117,16 @@ def main() -> None:
     if args.only_stats:
         publish_stats(args.tag)
         return
+    if args.only_rank:
+        publish_rank_index(args.tag)
+        return
     publish(args.tag)
     if args.model:
         publish_model(args.tag)
     if args.stats:
         publish_stats(args.tag)
+    if args.rank:
+        publish_rank_index(args.tag)
 
 
 if __name__ == "__main__":

@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # match dataset — so it uses *all* matches with no 512 MB OOM (the home machine builds +
     # publishes them; see scripts/export_stats.py). Unset = rebuild locally (capped, below).
     stats_url: str = ""
+    # URL of the published player-rank index (rank_index.json.gz Release asset). When set, the
+    # API LOADS the tag->Ranked-tier lookup from it (a compact NumPy-backed ~20 MB structure)
+    # instead of building a ~1.3M-entry dict (~200 MB, ~45 s) in memory from the full match
+    # dataset — which threatens the 512 MB free tier as the crawl grows. The home machine builds
+    # + publishes it (see scripts/export_rank_index.py). Unset = build locally from the matches.
+    rank_index_url: str = ""
     refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
     # Comma-separated allowed CORS origins. "*" allows any (fine for the read-only meta API).
     # Lock this to your site's origin on the roster host you expose via the tunnel, e.g.

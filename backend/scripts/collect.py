@@ -68,6 +68,19 @@ def _publish_stats() -> None:
         print(f"stats publish failed: {e}")
 
 
+def _publish_rank_index() -> None:
+    """Build the full tag->Ranked-tier index and publish rank_index.json.gz so the live API LOADS
+    it instead of building a ~200 MB dict from the whole dataset (which threatens the 512 MB free
+    tier). Best-effort — never kills the crawl loop."""
+    try:
+        from bsdraft.engine.playerrank import build_rank_index
+        from bsdraft.engine.rank_store import save_rank_index
+        save_rank_index(build_rank_index(), publisher.RANK_INDEX_PATH)
+        publisher.publish_rank_index()
+    except Exception as e:  # noqa: BLE001 — a rank-index hiccup shouldn't kill a long crawl loop
+        print(f"rank index publish failed: {e}")
+
+
 def _check_meta(retrain_on_shift: bool) -> None:
     """Run the meta-drift detector on the freshly crawled data and print the report. When the
     meta has shifted and ``--retrain-on-shift`` is set, kick a model retrain so recommendations
@@ -114,6 +127,7 @@ async def _loop(target: int, countries: list, interval: int, do_publish: bool,
         if do_publish:
             _try_publish()
             _publish_stats()
+            _publish_rank_index()
         if meta_check:
             _check_meta(retrain_on_shift)
         print(f"sleeping {interval}s …  (Ctrl-C to stop)")

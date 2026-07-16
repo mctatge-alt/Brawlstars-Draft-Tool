@@ -33,6 +33,7 @@ from bsdraft.engine.personal import build_personal_stats, matches_from_battlelog
 from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.playerrank import build_rank_index, current_ranked_tier
+from bsdraft.engine.rank_store import RankIndex, load_rank_index
 from bsdraft.engine.stats import DraftStats, build_bracketed
 from bsdraft.engine.stats_store import load_stats
 from bsdraft.engine.tiers import BRACKETS, bracket_of_tier, tier_label
@@ -44,7 +45,8 @@ _engine: Optional[DraftEngine] = None
 _last_check: float = 0.0   # epoch of the last sync attempt (liveness)
 _last_change: float = 0.0  # epoch of the last actual data change
 _meta_cache = None         # (data_version, MetaReport); recomputed lazily when data changes
-_rank_idx_cache = None     # (data_version, {tag: (ts, tier)}); recomputed lazily when data changes
+_rank_idx_cache = None     # (token, RankIndex); recomputed lazily when the data/artifact changes
+_rank_version = 0          # bumps when the synced rank-index artifact changes (invalidates the cache)
 _personal_cache: dict = {} # tag -> (data_version, PersonalStats|None); rebuilt when data changes
 _personal_locks: dict = {} # tag -> Lock; single-flights the per-tag dataset scan (no stampede)
 _personal_locks_guard = threading.Lock()
@@ -65,11 +67,25 @@ def _build_stats():
                            max_matches=settings.stats_max_matches)
 
 
-def _rank_index():
-    """Cached tag -> (ts, tier) index from the synced matches; rebuilt when data changes."""
+def _rank_index() -> RankIndex:
+    """Cached ``tag -> tier`` lookup. When RANK_INDEX_URL is set the API **loads** the precomputed
+    artifact (a compact NumPy-backed ~20 MB structure, no in-memory build); otherwise it **builds**
+    the index from the synced matches (~1.3M-entry dict, ~200 MB) and packs it down. Rebuilt lazily
+    when the synced artifact changes (``_rank_version``) or, for the local build, when the matches
+    change (``_last_change``)."""
     global _rank_idx_cache
-    if _rank_idx_cache is None or _rank_idx_cache[0] != _last_change:
-        _rank_idx_cache = (_last_change, build_rank_index())
+    use_artifact = bool(settings.rank_index_url) and sync.RANK_INDEX_PATH.exists()
+    token = (use_artifact, _rank_version if use_artifact else _last_change)
+    if _rank_idx_cache is None or _rank_idx_cache[0] != token:
+        if use_artifact:
+            try:
+                idx = load_rank_index(sync.RANK_INDEX_PATH)
+            except Exception as e:  # noqa: BLE001 — a corrupt/old artifact must fall back, not 500
+                logger.warning("rank index load failed (%s); building from matches", e)
+                idx = RankIndex.from_mapping(build_rank_index())
+        else:
+            idx = RankIndex.from_mapping(build_rank_index())
+        _rank_idx_cache = (token, idx)
     return _rank_idx_cache[1]
 
 
@@ -106,7 +122,7 @@ def _personal_for(tag: Optional[str]):
 async def _refresh_loop() -> None:
     """Periodically re-sync the dataset (and model) and hot-swap rebuilt stats / a reloaded
     model into the live engine, so a fresh crawl or retrain rolls out with no restart."""
-    global _last_check, _last_change
+    global _last_check, _last_change, _rank_version
     loop = asyncio.get_running_loop()
     while True:
         await asyncio.sleep(settings.refresh_seconds)
@@ -116,6 +132,12 @@ async def _refresh_loop() -> None:
             _last_check = time.time()
             if data_changed and _engine is not None:
                 _last_change = time.time()  # invalidate the rank / meta / personal caches
+            # Refresh the precomputed rank-index artifact (loaded, not rebuilt). A change just bumps
+            # the version so the lazy _rank_index() reloads on the next /api/rank — no eager work.
+            if settings.rank_index_url and _engine is not None:
+                if await loop.run_in_executor(None, sync.sync_rank_index, settings.rank_index_url):
+                    _rank_version += 1
+                    logger.info("rank index artifact updated")
             # Refresh the empirical stats from their source: the published artifact (STATS_URL,
             # loaded — no in-memory rebuild) or, failing that, a local rebuild from the matches.
             if settings.stats_url and _engine is not None:
@@ -148,6 +170,8 @@ async def lifespan(app: FastAPI):
         await loop.run_in_executor(None, sync.sync_model, settings.model_url)
     if settings.stats_url:
         await loop.run_in_executor(None, sync.sync_stats, settings.stats_url)
+    if settings.rank_index_url:
+        await loop.run_in_executor(None, sync.sync_rank_index, settings.rank_index_url)
     g, br = _build_stats()
     _engine = DraftEngine(g, WinProbModel(), bracket_stats=br)
     if settings.player_tag:
@@ -166,7 +190,8 @@ async def lifespan(app: FastAPI):
         except Exception:
             _engine.roster, _engine.roster_name = None, ""
     task = None
-    if (settings.data_url or settings.model_url or settings.stats_url) and settings.refresh_seconds > 0:
+    if (settings.data_url or settings.model_url or settings.stats_url
+            or settings.rank_index_url) and settings.refresh_seconds > 0:
         task = asyncio.create_task(_refresh_loop())
     try:
         yield
@@ -307,9 +332,8 @@ async def rank(tag: str):
         live = await _live_rank(tag_n)
         if live is not None:
             return live
-    hit = _rank_index().get(tag_n)
-    if hit:
-        t = hit[1]
+    t = _rank_index().get(tag_n)
+    if t:
         return S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
                               bracket=bracket_of_tier(t), source="dataset")
     return S.RankResponse(

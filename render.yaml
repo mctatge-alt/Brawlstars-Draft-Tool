@@ -28,6 +28,12 @@ services:
       # STATS_MAX_MATCHES below applies only to the fallback rebuild if this artifact can't load.
       - key: STATS_URL
         value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/stats.json.gz
+      # Precomputed rank index (tag -> Ranked tier), built off-box from ALL matches. When set, the
+      # API LOADS this compact (~20 MB NumPy-backed) lookup for /api/rank's dataset fallback instead
+      # of building a ~1.3M-entry dict (~200 MB, ~45 s) in memory from the full dataset — the
+      # standing OOM risk on the 512 MB free tier as the crawl grows.
+      - key: RANK_INDEX_URL
+        value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/rank_index.json.gz
       - key: REFRESH_SECONDS
         value: "600"
       # Cap the stats build to the most recent N matches so it fits the 512 MB free tier as the

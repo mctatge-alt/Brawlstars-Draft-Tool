@@ -35,6 +35,10 @@ STATS_PATH = PROCESSED_DIR / "stats.json"
 _STATS_ETAG_PATH = PROCESSED_DIR / ".stats.etag"
 _STATS_SHA_PATH = PROCESSED_DIR / ".stats.sha"
 
+RANK_INDEX_PATH = PROCESSED_DIR / "rank_index.json"
+_RANK_ETAG_PATH = PROCESSED_DIR / ".rank_index.etag"
+_RANK_SHA_PATH = PROCESSED_DIR / ".rank_index.sha"
+
 
 def _read(path: Path) -> str:
     try:
@@ -129,3 +133,11 @@ def sync_stats(url: str, timeout: float = 60.0) -> bool:
     changed, so the caller can reload and hot-swap the served stats — no in-memory rebuild from
     the full match dataset (which OOMs a small instance as the data grows)."""
     return _sync_file(url, STATS_PATH, _STATS_ETAG_PATH, _STATS_SHA_PATH, timeout, "stats")
+
+
+def sync_rank_index(url: str, timeout: float = 60.0) -> bool:
+    """Refresh the precomputed player-rank index (rank_index.json) from ``url``. Returns True iff
+    it changed, so the caller can reload it — no in-memory rebuild of the ~1.3M-entry tag->tier
+    dict from the full match dataset (~200 MB, which threatens a small instance as the data grows;
+    see :mod:`bsdraft.engine.rank_store`)."""
+    return _sync_file(url, RANK_INDEX_PATH, _RANK_ETAG_PATH, _RANK_SHA_PATH, timeout, "rank index")
