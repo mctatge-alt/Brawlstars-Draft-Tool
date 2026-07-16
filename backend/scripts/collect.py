@@ -27,7 +27,7 @@ from bsdraft.collect.client import BrawlStarsClient
 from bsdraft.collect.crawler import MATCHES_PATH, Crawler
 from bsdraft.config import settings
 from bsdraft.constants import REPO_ROOT
-from bsdraft.engine.drift import detect_drift
+from bsdraft.engine.drift import detect_drift, save_report
 
 
 async def _run(target: int, countries: list, revisit_after: float) -> int:
@@ -81,10 +81,13 @@ def _publish_rank_index() -> None:
         print(f"rank index publish failed: {e}")
 
 
-def _check_meta(retrain_on_shift: bool) -> None:
-    """Run the meta-drift detector on the freshly crawled data and print the report. When the
-    meta has shifted and ``--retrain-on-shift`` is set, kick a model retrain so recommendations
-    catch up. Never raises — a drift hiccup must not kill a long crawl loop."""
+def _check_meta(retrain_on_shift: bool, publish: bool = False) -> None:
+    """Run the meta-drift detector on the freshly crawled data and print the report. The report
+    is written to data/processed/meta_report.json and (with ``publish``) uploaded so the live
+    API SERVES it instead of recomputing drift per data change — two streaming passes over the
+    full dataset, minutes on the free tier's CPU sliver. When the meta has shifted and
+    ``--retrain-on-shift`` is set, kick a model retrain so recommendations catch up. Never
+    raises — a drift hiccup must not kill a long crawl loop."""
     try:
         report = detect_drift()
     except Exception as e:  # noqa: BLE001
@@ -92,6 +95,12 @@ def _check_meta(retrain_on_shift: bool) -> None:
         return
     print("\n--- meta drift ---")
     print(report.summary())
+    try:
+        save_report(report, publisher.META_REPORT_PATH)
+        if publish:
+            publisher.publish_meta_report()
+    except Exception as e:  # noqa: BLE001 — a report hiccup shouldn't kill a long crawl loop
+        print(f"meta report publish failed: {e}")
     if report.shifted and retrain_on_shift:
         _retrain()
 
@@ -129,7 +138,7 @@ async def _loop(target: int, countries: list, interval: int, do_publish: bool,
             _publish_stats()
             _publish_rank_index()
         if meta_check:
-            _check_meta(retrain_on_shift)
+            _check_meta(retrain_on_shift, publish=do_publish)
         print(f"sleeping {interval}s …  (Ctrl-C to stop)")
         await asyncio.sleep(interval)
 
@@ -169,7 +178,7 @@ def main() -> None:
             if args.publish:
                 _try_publish()
             if args.meta_check:
-                _check_meta(args.retrain_on_shift)
+                _check_meta(args.retrain_on_shift, publish=args.publish)
     except KeyboardInterrupt:
         print("\nstopped.")
 

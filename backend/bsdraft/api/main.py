@@ -27,7 +27,7 @@ from bsdraft.constants import RANKED_MODES
 from bsdraft.data import reference as R
 from bsdraft.data import sync
 from bsdraft.engine import mastery
-from bsdraft.engine.drift import detect_drift
+from bsdraft.engine.drift import detect_drift, load_report
 from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.personal import build_personal_stats, matches_from_battlelog
 from bsdraft.engine.scoring import score_candidate
@@ -132,6 +132,11 @@ async def _refresh_loop() -> None:
             _last_check = time.time()
             if data_changed and _engine is not None:
                 _last_change = time.time()  # invalidate the rank / meta / personal caches
+            # Refresh the published meta-drift report (a few KB) — /api/meta reads the file per
+            # request, so a changed artifact is picked up with no eager work here.
+            if settings.meta_report_url:
+                if await loop.run_in_executor(None, sync.sync_meta_report, settings.meta_report_url):
+                    logger.info("meta report artifact updated")
             # Refresh the precomputed rank-index artifact (loaded, not rebuilt). A change just bumps
             # the version so the lazy _rank_index() reloads on the next /api/rank — no eager work.
             if settings.rank_index_url and _engine is not None:
@@ -172,6 +177,8 @@ async def lifespan(app: FastAPI):
         await loop.run_in_executor(None, sync.sync_stats, settings.stats_url)
     if settings.rank_index_url:
         await loop.run_in_executor(None, sync.sync_rank_index, settings.rank_index_url)
+    if settings.meta_report_url:
+        await loop.run_in_executor(None, sync.sync_meta_report, settings.meta_report_url)
     g, br = _build_stats()
     _engine = DraftEngine(g, WinProbModel(), bracket_stats=br)
     if settings.player_tag:
@@ -191,7 +198,7 @@ async def lifespan(app: FastAPI):
             _engine.roster, _engine.roster_name = None, ""
     task = None
     if (settings.data_url or settings.model_url or settings.stats_url
-            or settings.rank_index_url) and settings.refresh_seconds > 0:
+            or settings.rank_index_url or settings.meta_report_url) and settings.refresh_seconds > 0:
         task = asyncio.create_task(_refresh_loop())
     try:
         yield
@@ -224,13 +231,21 @@ def health():
 
 @app.get("/api/meta", response_model=S.MetaResponse)
 def meta():
-    """Has the meta shifted (balance change / new brawler) recently? Computed from the synced
-    match data and cached per data version, so the frontend can poll it cheaply to show a
-    'meta shifted — recommendations updating' banner."""
+    """Has the meta shifted (balance change / new brawler) recently? Served from the published
+    meta-report artifact when META_REPORT_URL is set (the home crawler computes it each cycle) —
+    computing here streams the full dataset twice, minutes per data change on the free tier's
+    CPU sliver, so the local compute (cached per data version) is only the fallback."""
     global _meta_cache
-    if _meta_cache is None or _meta_cache[0] != _last_change:
-        _meta_cache = (_last_change, detect_drift())
-    rep = _meta_cache[1]
+    rep = None
+    if settings.meta_report_url and sync.META_REPORT_PATH.exists():
+        try:
+            rep = load_report(sync.META_REPORT_PATH)
+        except Exception as e:  # noqa: BLE001 — a corrupt/old artifact must fall back, not 500
+            logger.warning("meta report load failed (%s); computing from matches", e)
+    if rep is None:
+        if _meta_cache is None or _meta_cache[0] != _last_change:
+            _meta_cache = (_last_change, detect_drift())
+        rep = _meta_cache[1]
     names = {b.id: b.name for b in R.load_brawlers()}
     return S.MetaResponse(
         shifted=rep.shifted, n_recent=rep.n_recent, n_prior=rep.n_prior,

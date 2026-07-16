@@ -20,10 +20,12 @@ low-confidence in the UI.
 """
 from __future__ import annotations
 
+import json
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 from bsdraft.data import reference as R
 from bsdraft.data.dataset import iter_matches
@@ -84,6 +86,33 @@ class MetaReport:
         elif not self.new_brawlers:
             lines.append("no significant shifts — meta stable over the compared windows")
         return "\n".join(lines)
+
+
+def save_report(report: MetaReport, path: Union[str, Path]) -> None:
+    """Write ``report`` as JSON (atomic replace) so it can be published next to the other
+    artifacts — the deployed API *serves* the published report instead of recomputing drift,
+    which streams the full dataset twice (minutes on a small cloud CPU)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.parent / (p.name + ".tmp")
+    tmp.write_text(json.dumps(asdict(report)), encoding="utf-8")
+    tmp.replace(p)
+
+
+def load_report(path: Union[str, Path]) -> MetaReport:
+    """Load a :func:`save_report` artifact back into a :class:`MetaReport`. Raises on a missing
+    or malformed file — callers fall back to :func:`detect_drift`."""
+    d = json.loads(Path(path).read_text(encoding="utf-8"))
+    return MetaReport(
+        shifted=bool(d["shifted"]),
+        recent_days=float(d["recent_days"]),
+        prior_days=float(d["prior_days"]),
+        n_recent=int(d["n_recent"]),
+        n_prior=int(d["n_prior"]),
+        new_brawlers=[int(b) for b in d.get("new_brawlers", [])],
+        shifts=[BrawlerShift(**s) for s in d.get("shifts", [])],
+        note=str(d.get("note", "")),
+    )
 
 
 def _name(brawler_id: int) -> str:

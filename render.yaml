@@ -34,6 +34,12 @@ services:
       # standing OOM risk on the 512 MB free tier as the crawl grows.
       - key: RANK_INDEX_URL
         value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/rank_index.json.gz
+      # Precomputed meta-drift report (a few KB), written by the crawler each cycle. When set,
+      # /api/meta SERVES it instead of recomputing drift over the full dataset — two streaming
+      # passes per data change, minutes on the free tier's CPU sliver (times out the frontend's
+      # meta banner and the keep-warm meta alert).
+      - key: META_REPORT_URL
+        value: https://github.com/mctatge-alt/Brawlstars-Draft-Tool/releases/download/data-latest/meta_report.json
       - key: REFRESH_SECONDS
         value: "600"
       # Cap the stats build to the most recent N matches so it fits the 512 MB free tier as the

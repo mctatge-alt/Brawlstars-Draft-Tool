@@ -24,6 +24,7 @@
     <string>--target</string>
     <string>800</string>
     <string>--publish</string>
+    <string>--retrain-on-shift</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/ABSOLUTE/PATH/TO/Brawlstars-Draft-Tool</string>

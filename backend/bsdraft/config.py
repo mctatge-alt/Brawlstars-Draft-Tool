@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # dataset — which threatens the 512 MB free tier as the crawl grows. The home machine builds
     # + publishes it (see scripts/export_rank_index.py). Unset = build locally from the matches.
     rank_index_url: str = ""
+    # URL of the published meta-drift report (meta_report.json Release asset, a few KB). When
+    # set, /api/meta SERVES it instead of recomputing drift over the full match dataset (two
+    # streaming passes — minutes per data change on a small cloud CPU, which times out the
+    # frontend's meta banner). The crawler writes + publishes it after each cycle's meta check
+    # (see scripts/collect.py). Unset = compute locally from the matches.
+    meta_report_url: str = ""
     refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
     # Comma-separated allowed CORS origins. "*" allows any (fine for the read-only meta API).
     # Lock this to your site's origin on the roster host you expose via the tunnel, e.g.

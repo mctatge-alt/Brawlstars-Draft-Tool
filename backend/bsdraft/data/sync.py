@@ -39,6 +39,10 @@ RANK_INDEX_PATH = PROCESSED_DIR / "rank_index.json"
 _RANK_ETAG_PATH = PROCESSED_DIR / ".rank_index.etag"
 _RANK_SHA_PATH = PROCESSED_DIR / ".rank_index.sha"
 
+META_REPORT_PATH = PROCESSED_DIR / "meta_report.json"
+_META_ETAG_PATH = PROCESSED_DIR / ".meta_report.etag"
+_META_SHA_PATH = PROCESSED_DIR / ".meta_report.sha"
+
 
 def _read(path: Path) -> str:
     try:
@@ -141,3 +145,11 @@ def sync_rank_index(url: str, timeout: float = 60.0) -> bool:
     dict from the full match dataset (~200 MB, which threatens a small instance as the data grows;
     see :mod:`bsdraft.engine.rank_store`)."""
     return _sync_file(url, RANK_INDEX_PATH, _RANK_ETAG_PATH, _RANK_SHA_PATH, timeout, "rank index")
+
+
+def sync_meta_report(url: str, timeout: float = 60.0) -> bool:
+    """Refresh the precomputed meta-drift report (meta_report.json, a few KB) from ``url``.
+    ``/api/meta`` serves this file directly — recomputing drift streams the full match dataset
+    twice per data change, which takes minutes on a small cloud CPU (see
+    :mod:`bsdraft.engine.drift`)."""
+    return _sync_file(url, META_REPORT_PATH, _META_ETAG_PATH, _META_SHA_PATH, timeout, "meta report")

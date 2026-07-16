@@ -1,14 +1,30 @@
 name: keep-warm
 
-# Ping the free Render backend so it doesn't sleep (free instances spin down after ~15 min idle).
+# Two jobs share this workflow's schedule:
+#   * ping — every ~10 min, hit /api/health so the free Render instance doesn't sleep.
+#   * meta-alert — once a day, hit /api/meta and open a GitHub issue when the meta has
+#     shifted or a new brawler is in play (the drift detector's signal — see
+#     backend/bsdraft/engine/drift.py). The crawler auto-retrains the model on a shift
+#     (--retrain-on-shift); the issue is the human signal, mainly for the new-brawler case,
+#     which needs a manual refresh_reference.py + retrain + commit.
 # Set repo variable RENDER_HEALTH_URL to "<your-render-url>/api/health"
 #   (repo Settings -> Secrets and variables -> Actions -> Variables -> New repository variable).
 # Note: GitHub disables scheduled workflows after 60 days with no repo activity.
 
 on:
   schedule:
-    - cron: "*/12 * * * *"   # every ~12 minutes
+    # Every ~10 min. Render's free tier sleeps after ~15 min idle, and GitHub's scheduled runs
+    # are best-effort — frequently delayed and sometimes dropped under load — so leave margin for
+    # a skipped run rather than pinging right at the 15-min edge. (For a hard guarantee, point a
+    # dedicated uptime pinger — UptimeRobot / cron-job.org — at the same /api/health URL.)
+    - cron: "*/10 * * * *"
+    # Daily meta-drift check (13:17 UTC ~ morning US Eastern; odd minute to dodge the
+    # top-of-hour scheduling pileup).
+    - cron: "17 13 * * *"
   workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
   ping:
@@ -21,7 +37,94 @@ jobs:
             echo "RENDER_HEALTH_URL not set — skipping (configure it to enable keep-warm)."
             exit 0
           fi
-          # Cold boot loads the model + ~240k matches and can take ~45s,
-          # so allow generous headroom — a 30s cap was timing out every ping
-          # and the instance never actually got warmed.
-          curl -fsS --max-time 90 "$URL" && echo "  …warm"
+          # A full cold boot (instance fully slept) downloads the artifacts + loads the model and
+          # can take well over a minute on a bad network draw, so allow generous headroom — a 90s
+          # cap was tripping on the slow cold boots this is meant to absorb. Retry once so a single
+          # slow boot doesn't false-alarm: the first request itself warms the instance.
+          curl -fsS --max-time 150 --retry 2 --retry-all-errors --retry-delay 10 "$URL" && echo "  …warm"
+
+  meta-alert:
+    # Only on the daily cron (or a manual run) — not every 10 minutes.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 13 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Check /api/meta and file an issue on a shift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          URL="${{ vars.RENDER_HEALTH_URL }}"
+          if [ -z "$URL" ]; then
+            echo "RENDER_HEALTH_URL not set — skipping."
+            exit 0
+          fi
+          META_URL="${URL%/api/health}/api/meta"
+          if [ "$META_URL" = "$URL" ]; then
+            echo "RENDER_HEALTH_URL does not end in /api/health — can't derive /api/meta." >&2
+            exit 1
+          fi
+          # First call after a data refresh recomputes drift over the full dataset — allow time.
+          META=$(curl -fsS --max-time 150 --retry 2 --retry-all-errors --retry-delay 10 "$META_URL")
+          echo "$META" | jq .
+
+          if [ "$(jq -r '.shifted' <<<"$META")" != "true" ]; then
+            echo "Meta stable — nothing to report."
+            exit 0
+          fi
+
+          # Dedup: a shift stays flagged for up to a week (7d windows), so don't refile while an
+          # alert is open or was filed in the last 10 days. Closing the issue = acknowledged.
+          CUTOFF=$(date -u -d '10 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          RECENT=$(gh issue list --label meta-alert --state all --limit 50 --json state,createdAt |
+                     jq --arg cutoff "$CUTOFF" \
+                       '[.[] | select(.state == "OPEN" or .createdAt >= $cutoff)] | length')
+          if [ "${RECENT:-0}" -gt 0 ]; then
+            echo "A meta-alert issue is already open or was filed in the last 10 days — skipping."
+            exit 0
+          fi
+
+          NEW=$(jq -r '.new_brawlers | join(", ")' <<<"$META")
+          if [ -n "$NEW" ]; then
+            TITLE="New brawler(s) in play: $NEW"
+          else
+            TITLE="Meta shift detected ($(jq -r '.shifts | length' <<<"$META") brawlers moved)"
+          fi
+
+          {
+            echo "The drift detector flagged a meta change (\`/api/meta\`)."
+            echo
+            if [ -n "$NEW" ]; then
+              echo "## New brawler(s): $NEW"
+              echo
+              echo "These are invisible to the model (encode to index 0) until the reference is refreshed:"
+              echo '```'
+              echo "PYTHONPATH=backend python backend/scripts/refresh_reference.py"
+              echo "PYTHONPATH=backend python backend/scripts/train.py"
+              echo "PYTHONPATH=backend python backend/scripts/export_model.py"
+              echo "PYTHONPATH=backend python -m bsdraft.collect.publish --model"
+              echo "git add data/reference/ && git commit && git push   # Render deploy picks up the catalog"
+              echo '```'
+              echo
+            fi
+            SHIFTS=$(jq -r '.shifts[:10][] |
+              "| \(.name) | \(.kind) | \((.wr_before*1000|round)/10)% → \((.wr_after*1000|round)/10)% | \((.z*10|round)/10) |"' <<<"$META")
+            if [ -n "$SHIFTS" ]; then
+              echo "## Significant win-rate shifts (recent 7d vs prior 7d)"
+              echo
+              echo "| Brawler | Direction | Win rate | z |"
+              echo "|---|---|---|---|"
+              echo "$SHIFTS"
+              echo
+              echo "The home crawler retrains + republishes the model automatically on a shift"
+              echo "(\`--retrain-on-shift\`); recency-weighted stats self-correct. Check"
+              echo "\`data/raw/crawl.out.log\` on the home machine to confirm the retrain ran."
+              echo
+            fi
+            echo "_Close this issue to acknowledge; a new one is filed at most every 10 days._"
+          } > /tmp/issue-body.md
+
+          gh label create meta-alert --color D93F0B \
+            --description "Automated: drift detector flagged a meta change" --force
+          gh issue create --title "$TITLE" --label meta-alert --body-file /tmp/issue-body.md
