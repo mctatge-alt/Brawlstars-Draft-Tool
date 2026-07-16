@@ -35,7 +35,7 @@
     <key>PYTHONPATH</key>
     <string>backend</string>
     <key>CORS_ORIGINS</key>
-    <string>https://brawlstars-draft-tool.pages.dev</string>
+    <string>https://brawlstars-draft-tool.pages.dev,https://brawldraft.com,https://www.brawldraft.com</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

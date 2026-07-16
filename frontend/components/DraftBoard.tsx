@@ -138,20 +138,34 @@ function Avatar({ b, size = 56, dim, ring, className }: { b?: Brawler; size?: nu
   );
 }
 
-function RankWidget({ tag, setTag, rankInfo, loading, onCheck }: {
-  tag: string; setTag: (s: string) => void; rankInfo: RankInfo | null; loading: boolean; onCheck: () => void;
+function RankWidget({ tag, setTag, rankInfo, loading, onCheck, onClear }: {
+  tag: string; setTag: (s: string) => void; rankInfo: RankInfo | null; loading: boolean;
+  onCheck: () => void; onClear: () => void;
 }) {
   return (
     <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 px-4 py-3 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 anim-fade-up" style={{ animationDelay: "60ms" }}>
-      <div className="flex items-center gap-1.5">
-        <input value={tag} onChange={(e) => setTag(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && onCheck()} placeholder="#PLAYERTAG"
-          className="bg-[var(--panel2)] border border-[var(--border)] rounded-md px-2.5 py-1.5 text-sm w-36 uppercase outline-none focus:border-[var(--accent)] ctl" />
-        <button onClick={onCheck} disabled={loading || !tag.trim()}
+      {/* A real <form> with a named, autocomplete-enabled input lets the browser remember the tag
+          and offer it back as a native suggestion on the next visit. The value is also persisted to
+          localStorage by the parent, which pre-fills it and auto-loads the rank on return. */}
+      <form className="flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); onCheck(); }}>
+        <div className="relative flex items-center">
+          <input value={tag} onChange={(e) => setTag(e.target.value.toUpperCase())}
+            id="bs-player-tag" name="bs-player-tag" autoComplete="on"
+            autoCapitalize="characters" spellCheck={false} enterKeyHint="search"
+            placeholder="Tag (#GZ95SFSKJ3)"
+            className="bg-[var(--panel2)] border border-[var(--border)] rounded-md pl-2.5 pr-7 py-1.5 text-sm w-48 outline-none focus:border-[var(--accent)] ctl" />
+          {tag && (
+            <button type="button" onClick={onClear} aria-label="Forget saved tag" title="Forget saved tag"
+              className="absolute right-1.5 grid place-items-center w-5 h-5 rounded-full leading-none text-[var(--muted)] hover:text-[#e0566f] ctl">
+              ✕
+            </button>
+          )}
+        </div>
+        <button type="submit" disabled={loading || !tag.trim()}
           className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)] disabled:opacity-50 ctl">
           {loading ? "…" : "Enter ↵"}
         </button>
-      </div>
+      </form>
       {rankInfo?.found && rankInfo.tier_label && (() => {
         const c = bracketColor(rankInfo.bracket);
         const { name, sub } = splitTier(rankInfo.tier_label!);
@@ -502,6 +516,15 @@ export default function DraftBoard() {
     }
   };
 
+  // Forget the remembered tag: empty the field, drop the rank badge, and clear the persisted
+  // value so the next visit starts blank. Personalization falls back to the server default
+  // once rosterTag/personalTag go null.
+  const clearTag = () => {
+    setTag("");
+    setRankInfo(null);
+    localStorage.removeItem("bsdraft.tag");
+  };
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (ref?.brawlers || [])
@@ -609,7 +632,7 @@ export default function DraftBoard() {
         </div>
       </header>
 
-      <RankWidget tag={tag} setTag={setTag} rankInfo={rankInfo} loading={rankLoading} onCheck={checkRank} />
+      <RankWidget tag={tag} setTag={setTag} rankInfo={rankInfo} loading={rankLoading} onCheck={checkRank} onClear={clearTag} />
 
       {err && <div className="mb-4 text-sm text-[#e0566f]">Couldn’t fetch suggestions — {err}</div>}
 
