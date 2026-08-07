@@ -5,6 +5,7 @@ import {
   Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health, Meta, RankInfo, TopPick,
   getReference, getRoster, recommend, getHealth, getMeta, getRank, getTopPicks,
 } from "@/lib/api";
+import AdSlot from "@/components/AdSlot";
 
 const CLASS_COLOR: Record<string, string> = {
   Tank: "#e0566f", Assassin: "#b15be0", Controller: "#3b82f6", Marksman: "#3ec46d",
@@ -758,8 +759,14 @@ export default function DraftBoard() {
         )}
       </div>
       {recs?.game_plan && our.some((x) => x != null) && <GamePlanPanel gp={recs.game_plan} blind={blindPick} />}
+      {/* Single ad slot, deliberately below the entire draft flow — mid-draft ad formats are the
+          ones the retention evidence says drive abandonment, and accidental clicks near the
+          picker violate AdSense placement policy. Renders nothing until the env vars are set. */}
+      <AdSlot name="footer" />
       <footer className="text-center text-xs text-[var(--muted)] mt-6">
-        Recommendations fuse a trained win-prob model with empirical map stats · This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not responsible for it.
+        Recommendations fuse a trained win-prob model with empirical map stats · This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not responsible for it (
+        <a href="https://supercell.com/en/fan-content-policy/" className="underline hover:text-[var(--text)]" target="_blank" rel="noopener noreferrer">Fan Content Policy</a>
+        ) · <a href="/privacy" className="underline hover:text-[var(--text)]">Privacy</a>
       </footer>
     </div>
   );

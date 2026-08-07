@@ -33,6 +33,10 @@ PYTHONPATH=backend python backend/tests/test_personal.py
 # pytest/ruff/mypy are optional dev tools (not pinned in requirements).
 
 # Frontend
+# Ads ship dark: components/AdSlot.tsx + the loader in app/layout.tsx render nothing until
+# NEXT_PUBLIC_ADSENSE_CLIENT + NEXT_PUBLIC_ADSENSE_SLOT_FOOTER are set in the Cloudflare Pages
+# build env. When enabling, add public/ads.txt with the real "google.com, pub-…" line in the SAME
+# commit — a served ads.txt without the publisher line halts ad serving ("Unauthorized").
 npm --prefix frontend install
 npm --prefix frontend run dev      # http://localhost:3000
 npm --prefix frontend run build    # static export → frontend/out/ (output: "export")
