@@ -6,6 +6,7 @@ import {
   getReference, getRoster, recommend, getHealth, getMeta, getRank, getTopPicks,
 } from "@/lib/api";
 import AdSlot from "@/components/AdSlot";
+import Logo from "@/components/Logo";
 
 const CLASS_COLOR: Record<string, string> = {
   Tank: "#e0566f", Assassin: "#b15be0", Controller: "#3b82f6", Marksman: "#3ec46d",
@@ -250,7 +251,7 @@ function BootScreen({ show, error, onRetry }: { show: boolean; error: string | n
     <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
       <header className="flex flex-wrap items-center gap-3 mb-5 anim-fade-up">
         <h1 className="text-xl font-bold tracking-tight mr-2">
-          <span className="inline-block floaty mr-1">⚔️</span>
+          <span className="inline-block floaty mr-1.5 align-[-0.35em]"><Logo /></span>
           <span className="brand-gradient">Brawl Draft</span>{" "}
           <span className="text-[var(--muted)] font-normal text-sm">ranked assistant</span>
         </h1>
@@ -592,7 +593,7 @@ export default function DraftBoard() {
     <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
       <header className="flex flex-wrap items-center gap-3 mb-5 anim-fade-up">
         <h1 className="text-xl font-bold tracking-tight mr-2">
-          <span className="inline-block floaty mr-1">⚔️</span>
+          <span className="inline-block floaty mr-1.5 align-[-0.35em]"><Logo /></span>
           <span className="brand-gradient">Brawl Draft</span>{" "}
           <span className="text-[var(--muted)] font-normal text-sm">ranked assistant</span>
         </h1>
