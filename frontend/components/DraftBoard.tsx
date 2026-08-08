@@ -764,10 +764,16 @@ export default function DraftBoard() {
           ones the retention evidence says drive abandonment, and accidental clicks near the
           picker violate AdSense placement policy. Renders nothing until the env vars are set. */}
       <AdSlot name="footer" />
-      <footer className="text-center text-xs text-[var(--muted)] mt-6">
+      <footer className="mt-6 pt-4 border-t border-[var(--border)] text-center text-xs text-[var(--muted)]">
+        <nav className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mb-3 text-[13px]">
+          <a href="/guide" className="hover:text-[var(--text)] transition-colors">Draft guide</a>
+          <a href="/how-it-works" className="hover:text-[var(--text)] transition-colors">How it works</a>
+          <a href="/faq" className="hover:text-[var(--text)] transition-colors">FAQ</a>
+          <a href="/privacy" className="hover:text-[var(--text)] transition-colors">Privacy</a>
+        </nav>
         Recommendations fuse a trained win-prob model with empirical map stats · This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not responsible for it (
         <a href="https://supercell.com/en/fan-content-policy/" className="underline hover:text-[var(--text)]" target="_blank" rel="noopener noreferrer">Fan Content Policy</a>
-        ) · <a href="/privacy" className="underline hover:text-[var(--text)]">Privacy</a>
+        )
       </footer>
     </div>
   );

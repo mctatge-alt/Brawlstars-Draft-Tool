@@ -12,7 +12,13 @@ export default function Privacy() {
   return (
     <div className="min-h-screen p-4 md:p-6 max-w-2xl mx-auto">
       <header className="mb-6">
-        <a href="/" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">← Back to the draft board</a>
+        <nav className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm mb-5">
+          <a href="/" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">Draft board</a>
+          <a href="/guide" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">Draft guide</a>
+          <a href="/how-it-works" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">How it works</a>
+          <a href="/faq" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">FAQ</a>
+          <span className="text-[var(--text)] font-semibold" aria-current="page">Privacy</span>
+        </nav>
         <h1 className="text-2xl font-bold tracking-tight mt-3">
           <span className="brand-gradient">Privacy</span>
         </h1>
