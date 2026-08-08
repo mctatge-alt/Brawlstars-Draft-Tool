@@ -2,8 +2,21 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  // metadataBase turns the opengraph-image.png file convention into the absolute URL that
+  // scrapers require — without it Next emits a relative path and warns at build time.
+  metadataBase: new URL("https://brawldraft.com"),
   title: "Brawl Draft — Ranked Draft Assistant",
   description: "AI-powered Brawl Stars ranked draft tool: bans, picks, and win-probability.",
+  openGraph: {
+    type: "website",
+    siteName: "Brawl Draft",
+    title: "Brawl Draft — Ranked Draft Assistant",
+    description: "AI-powered Brawl Stars ranked draft tool: bans, picks, and win-probability.",
+    url: "/",
+  },
+  // Next reuses opengraph-image.png for twitter:image too, so the card needs no duplicate PNG —
+  // only the card type, which is what makes X render it full-bleed instead of as a thumbnail.
+  twitter: { card: "summary_large_image" },
 };
 
 // Set in the Cloudflare Pages build env to turn ads on (see components/AdSlot.tsx).

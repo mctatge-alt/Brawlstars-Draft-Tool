@@ -1,0 +1,34 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#121b2b"/>
+      <stop offset="1" stop-color="#080b11"/>
+    </linearGradient>
+    <linearGradient id="bd-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#121b2b"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#page)"/>
+
+  <!-- the mark, same geometry as logo.svg, scaled 512 -> 200 -->
+  <g transform="translate(165 215) scale(0.390625)">
+    <rect width="512" height="512" rx="112" fill="url(#bd-bg)" stroke="#26303f" stroke-width="4"/>
+    <path fill="#3b82f6" fill-rule="evenodd" d="M160 112H298A54 54 0 0 1 298 220H160ZM204 140H240A26 26 0 0 1 240 192H204Z"/>
+    <path fill="#e8c34a" d="M160 240H312L352 256 312 272H160Z"/>
+    <path fill="#e0566f" fill-rule="evenodd" d="M160 292H298A54 54 0 0 1 298 400H160ZM204 320H240A26 26 0 0 1 240 372H204Z"/>
+  </g>
+
+  <text x="405" y="322" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+        font-weight="bold" font-size="104" letter-spacing="-3" fill="#ffffff">Brawl Draft</text>
+  <text x="409" y="380" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+        font-size="34" letter-spacing="0.5" fill="#8b97a7">Ranked draft assistant</text>
+
+  <!-- accent rule echoing the mark's blue / gold / red -->
+  <rect x="409" y="416" width="150" height="6" rx="3" fill="#3b82f6"/>
+  <rect x="571" y="416" width="60"  height="6" rx="3" fill="#e8c34a"/>
+  <rect x="643" y="416" width="100" height="6" rx="3" fill="#e0566f"/>
+
+  <text x="600" y="556" text-anchor="middle" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+        font-size="30" fill="#6b7787">Bans, picks &amp; win probability &#183; brawldraft.com</text>
+</svg>
