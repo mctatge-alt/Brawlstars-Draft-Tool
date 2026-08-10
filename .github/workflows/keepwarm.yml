@@ -1,12 +1,26 @@
 name: keep-warm
 
-# Two jobs share this workflow's schedule:
+# Jobs sharing this workflow's schedule:
 #   * ping — every ~10 min, hit /api/health so the free Render instance doesn't sleep.
 #   * meta-alert — once a day, hit /api/meta and open a GitHub issue when the meta has
 #     shifted or a new brawler is in play (the drift detector's signal — see
 #     backend/bsdraft/engine/drift.py). The crawler auto-retrains the model on a shift
 #     (--retrain-on-shift); the issue is the human signal, mainly for the new-brawler case,
 #     which needs a manual refresh_reference.py + retrain + commit.
+#   * balance-watch — once a day, scrape Supercell's official release-notes blog directly
+#     (backend/bsdraft/collect/patchnotes.py) and open a 'balance-change' issue when the notes
+#     change. This is the *leading* signal: drift.py can only infer a patch from match data
+#     after enough ranked games accumulate, whereas the notes announce buffs/nerfs and new
+#     brawlers the moment they publish. Deduped on a content fingerprint, so a living-doc
+#     hotfix edit re-alerts but a re-run over unchanged notes stays quiet. No key / no IP lock.
+#   * catalog-watch — once a day, diff the live brawler catalog (keyless) against the committed
+#     data/reference/ snapshot and open a PR when it moved: new/removed brawlers, added/renamed
+#     star powers and gadgets, class/rarity changes. Purely additive diffs auto-merge; anything
+#     that REMOVES content waits for a human (a removal almost always means the upstream API
+#     served a partial payload, not that Supercell deleted a brawler). See
+#     backend/bsdraft/data/catalog.py. This is the structured counterpart to balance-watch:
+#     gears/hypercharges/buffies are not in any catalog endpoint, so only the notes catch those.
+#   * pipeline-stale — once a day, alert if the crawler stopped publishing fresh match data.
 # Set repo variable RENDER_HEALTH_URL to "<your-render-url>/api/health"
 #   (repo Settings -> Secrets and variables -> Actions -> Variables -> New repository variable).
 # Note: GitHub disables scheduled workflows after 60 days with no repo activity.
@@ -128,3 +142,233 @@ jobs:
           gh label create meta-alert --color D93F0B \
             --description "Automated: drift detector flagged a meta change" --force
           gh issue create --title "$TITLE" --label meta-alert --body-file /tmp/issue-body.md
+
+  pipeline-stale:
+    # Only on the daily cron (or a manual run) — not every 10 minutes.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 13 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # needed to read the data-latest release via the API
+      issues: write
+    steps:
+      - name: Check data-latest freshness and file an issue if stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Fetch the data-latest release from the GitHub REST API and check the age of
+          # matches.jsonl.gz. The REST API is used directly (rather than `gh release view`)
+          # so we control retries and field names are unambiguous (snake_case REST).
+          RELEASE=$(curl -fsS --max-time 30 --retry 2 --retry-all-errors --retry-delay 5 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GH_REPO/releases/tags/data-latest") || {
+            echo "Could not fetch data-latest release — skipping stale check."
+            exit 0
+          }
+
+          ASSET_DATE=$(echo "$RELEASE" | jq -r '.assets[] | select(.name == "matches.jsonl.gz") | .updated_at')
+          if [ -z "$ASSET_DATE" ] || [ "$ASSET_DATE" = "null" ]; then
+            echo "matches.jsonl.gz not found in data-latest release — skipping."
+            exit 0
+          fi
+
+          ASSET_EPOCH=$(date -u -d "$ASSET_DATE" +%s)
+          NOW_EPOCH=$(date -u +%s)
+          AGE_HOURS=$(( (NOW_EPOCH - ASSET_EPOCH) / 3600 ))
+          echo "matches.jsonl.gz last updated: $ASSET_DATE ($AGE_HOURS h ago)"
+
+          if [ "$AGE_HOURS" -lt 48 ]; then
+            echo "Pipeline is fresh ($AGE_HOURS h) — nothing to report."
+            exit 0
+          fi
+
+          # Dedup: skip if an open issue or one filed in the last 3 days exists.
+          # 3-day window keeps alerts actionable without daily spam; closing = acknowledged.
+          CUTOFF=$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          RECENT=$(gh issue list --label pipeline-stale --state all --limit 50 --json state,createdAt |
+                     jq --arg cutoff "$CUTOFF" \
+                       '[.[] | select(.state == "OPEN" or .createdAt >= $cutoff)] | length')
+          if [ "${RECENT:-0}" -gt 0 ]; then
+            echo "A pipeline-stale issue is already open or was filed in the last 3 days — skipping."
+            exit 0
+          fi
+
+          TITLE="Crawler stale: matches.jsonl.gz is ${AGE_HOURS}h old"
+
+          {
+            echo "The \`data-latest\` release asset \`matches.jsonl.gz\` has not been updated in **${AGE_HOURS} hours** (last updated \`$ASSET_DATE\`)."
+            echo
+            echo "Likely cause: the home crawler's Supercell API key 403'd after a home IP change."
+            echo
+            echo "## Checklist"
+            echo
+            echo "- [ ] Check \`data/raw/crawl.out.log\` on the home machine for 403 / network errors"
+            echo "- [ ] Regenerate the key at https://developer.brawlstars.com/ for the current home IP"
+            echo "- [ ] Update \`BRAWLSTARS_API_TOKEN\` in \`.env\` and restart the crawler:"
+            echo '  ```'
+            echo "  launchctl kickstart -k gui/\$(id -u)/com.bsdraft.crawler"
+            echo '  ```'
+            echo "- [ ] Confirm the next publish cycle updates \`matches.jsonl.gz\` in \`data-latest\`"
+            echo
+            echo "_Close this issue once the pipeline is running again; a new alert fires at most every 3 days while the pipeline remains stale._"
+          } > /tmp/stale-body.md
+
+          gh label create pipeline-stale --color 0075ca \
+            --description "Automated: crawler has not published new data recently" --force
+          gh issue create --title "$TITLE" --label pipeline-stale --body-file /tmp/stale-body.md
+
+  catalog-watch:
+    # Only on the daily cron (or a manual run) — not every 10 minutes.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 13 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the refresh branch
+      pull-requests: write   # open + auto-merge the PR
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install "httpx>=0.27"
+      - name: Diff the live catalog and open a refresh PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: bot/catalog-refresh
+        run: |
+          BODY="$RUNNER_TEMP/catalog-pr.md"
+          # --write refreshes data/reference/brawlers.json and fills in class_overrides for
+          # brand-new brawlers (the catalog tags them "Unknown"; the release notes carry the real
+          # class). maps.json is deliberately NOT auto-written — ranked-map indices are positional,
+          # so inserting a map shifts later maps onto neighbouring trained embedding rows.
+          # Progress goes to stderr, so stdout is exactly the one-line JSON header. Non-zero exit
+          # = every catalog host failed -> skip quietly; the next run retries.
+          if ! HEADER=$(PYTHONPATH=backend python -m bsdraft.data.catalog --pr-body "$BODY" --write); then
+            echo "Catalog fetch failed (all hosts) — skipping this run." >&2
+            exit 0
+          fi
+          echo "$HEADER" | jq .
+
+          if [ "$(jq -r '.changed' <<<"$HEADER")" != "true" ]; then
+            echo "Catalog matches the committed snapshot — nothing to do."
+            exit 0
+          fi
+
+          # Sanity gate: the rewritten reference must still load with sane counts before any of
+          # it can be committed, let alone auto-merged.
+          PYTHONPATH=backend python -m bsdraft.data.reference
+
+          # Stage ONLY the generated reference files, so an unrelated stray file can never ride
+          # along into an auto-merged commit.
+          git add -- data/reference/brawlers.json backend/bsdraft/data/class_overrides.json
+          if git diff --cached --quiet; then
+            echo "Diff reported a change but no tracked file moved — nothing to commit."
+            exit 0
+          fi
+
+          TITLE=$(jq -r '.title' <<<"$HEADER")
+          SAFE=$(jq -r '.safe_to_automerge' <<<"$HEADER")
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Give --force-with-lease a basis to compare against: the shallow checkout has never
+          # seen this branch, and without a remote-tracking ref the push is rejected as "stale
+          # info" — which would wedge the watcher permanently once a PR branch survives a run.
+          git fetch --no-tags --depth=1 origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
+          git checkout -B "$BRANCH"
+          git commit -m "$TITLE" -m "Automated by the catalog-watch job. See the PR body for the diff."
+          git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
+
+          # Reuse the open PR for this rolling branch if there is one; the push already updated it.
+          PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$PR" ]; then
+            gh label create catalog-change --color 1D76DB \
+              --description "Automated: live brawler catalog differs from the committed snapshot" --force
+            PR=$(gh pr create --head "$BRANCH" --base main --title "$TITLE" \
+                   --label catalog-change --body-file "$BODY" | grep -oE '[0-9]+$')
+            echo "Opened PR #$PR."
+          else
+            gh pr edit "$PR" --title "$TITLE" --body-file "$BODY"
+            echo "Updated existing PR #$PR."
+          fi
+
+          if [ "$SAFE" != "true" ]; then
+            echo "Destructive diff — leaving PR #$PR for review:"
+            jq -r '.destructive[]' <<<"$HEADER"
+            gh label create needs-review --color B60205 \
+              --description "Automated: catalog diff removes or mass-edits content — verify before merging" --force
+            gh pr edit "$PR" --add-label "needs-review"
+            exit 0
+          fi
+
+          # A PR previously flagged for review must not be auto-merged just because today's diff
+          # happens to look additive — the flagged content is still in the branch.
+          if gh pr view "$PR" --json labels --jq '.labels[].name' | grep -qx "needs-review"; then
+            echo "PR #$PR is still flagged needs-review — not auto-merging."
+            exit 0
+          fi
+
+          # Additive only -> land it. Prefer --auto (waits for required checks); fall back to a
+          # direct squash merge when the repo has auto-merge disabled.
+          gh pr merge "$PR" --auto --squash --delete-branch \
+            || gh pr merge "$PR" --squash --delete-branch \
+            || echo "Could not merge PR #$PR automatically — left open."
+
+  balance-watch:
+    # Only on the daily cron (or a manual run) — not every 10 minutes.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 13 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # checkout (the scraper is stdlib + httpx; no repo secrets needed)
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install scraper deps
+        # patchnotes.py needs only httpx at runtime (the reference layer it imports is stdlib).
+        run: pip install "httpx>=0.27"
+      - name: Scrape release notes and file an issue when they change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          BODY="$RUNNER_TEMP/balance-body.md"
+          # Discover + parse the latest release notes. Print the human summary to the log for
+          # visibility, and (in --issue-body mode) write the rendered issue + a JSON header.
+          PYTHONPATH=backend python -m bsdraft.collect.patchnotes || true
+          if ! HEADER=$(PYTHONPATH=backend python -m bsdraft.collect.patchnotes --issue-body "$BODY"); then
+            echo "Scrape failed (site down or layout changed) — skipping this run." >&2
+            exit 0
+          fi
+          echo "$HEADER" | jq .
+
+          FP=$(jq -r '.fingerprint' <<<"$HEADER")
+          TITLE=$(jq -r '.title' <<<"$HEADER")
+          # File when there's real balance content OR when a recognized section was present but
+          # parsed empty (layout_warning) — the latter means the scraper likely broke and must
+          # not fail silently. A genuinely balance-free update (no recognized section at all) is
+          # neither, so it stays quiet. Fingerprint dedup keeps a broken page to a single issue.
+          if [ "$(jq -r '.has_content' <<<"$HEADER")" != "true" ] \
+             && [ "$(jq -r '.layout_warning' <<<"$HEADER")" != "true" ]; then
+            echo "Latest notes carry no parsed balance changes or new brawlers — nothing to file."
+            exit 0
+          fi
+
+          # Dedup on the content fingerprint embedded in every issue body. --state all so a
+          # patch you've already seen and CLOSED doesn't re-alert; a living-doc edit changes the
+          # fingerprint and files a fresh issue on its own.
+          MARKER="<!-- bs-patch:${FP} -->"
+          EXISTS=$(gh issue list --label balance-change --state all --limit 50 --json body |
+                     jq --arg m "$MARKER" '[.[] | select(.body | contains($m))] | length')
+          if [ "${EXISTS:-0}" -gt 0 ]; then
+            echo "Already alerted on fingerprint ${FP} — skipping."
+            exit 0
+          fi
+
+          gh label create balance-change --color 5319E7 \
+            --description "Automated: official release notes changed (balance / new brawler)" --force
+          gh issue create --title "$TITLE" --label balance-change --body-file "$BODY"
+          echo "Filed balance-change issue for fingerprint ${FP}."
