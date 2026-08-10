@@ -1,5 +1,20 @@
 import type { Metadata } from "next";
+import { Archivo, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+
+// Tactical-telemetry type system: a heavy neo-grotesque for structural macro type + a monospace
+// for all data, labels, and telemetry. Self-hosted at build time by next/font (works with the
+// static export), so no runtime <link> to Google and no layout shift.
+const sans = Archivo({
+  subsets: ["latin"],
+  variable: "--font-archivo",
+  display: "swap",
+});
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jbmono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   // metadataBase turns the opengraph-image.png file convention into the absolute URL that
@@ -24,7 +39,7 @@ const ADSENSE_CLIENT = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body>
         {children}
         {/* Plain <script async> (not next/script): React 19 hoists async scripts into <head>

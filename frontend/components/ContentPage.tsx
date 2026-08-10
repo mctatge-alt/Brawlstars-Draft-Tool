@@ -30,44 +30,62 @@ function Prose({ text }: { text: string }) {
   );
 }
 
-export default function ContentPage({ content, current }: { content: Content; current: string }) {
+// Tactical top bar shared by the written pages, so the docs read as the same console as the
+// board: mono nav, hairline rules, sharp corners. Long-form prose stays in the readable sans.
+function DocNav({ current }: { current: string }) {
   return (
-    <div className="min-h-screen p-4 md:p-6 max-w-3xl mx-auto">
-      <header className="mb-8">
-        <a href="/" className="inline-flex items-center gap-2 mb-5" aria-label="Brawl Draft home">
-          <Logo size={30} />
-          <span className="font-bold tracking-tight">
-            <span className="brand-gradient">Brawl Draft</span>
-          </span>
-        </a>
-        <nav className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm mb-7">
-          {NAV.map((n) => (
-            <a key={n.href} href={n.href}
-              className={n.href === current
-                ? "text-[var(--text)] font-semibold"
-                : "text-[var(--muted)] hover:text-[var(--text)] transition-colors"}
-              aria-current={n.href === current ? "page" : undefined}>
+    <nav className="panel flex flex-wrap items-center gap-x-1 gap-y-1 px-3 py-2 mb-8">
+      <a href="/" className="flex items-center gap-2 mr-3" aria-label="Brawl Draft home">
+        <Logo size={22} />
+        <span className="brand-gradient text-[14px]">BRAWL DRAFT</span>
+      </a>
+      <span className="label hidden sm:inline mr-2">// DOCS</span>
+      <div className="flex flex-wrap gap-x-1 ml-auto">
+        {NAV.map((n) => {
+          const on = n.href === current;
+          return (
+            <a key={n.href} href={n.href} aria-current={on ? "page" : undefined}
+              className="mono text-[11px] tracking-[0.06em] uppercase px-2.5 py-1.5 border ctl"
+              style={on
+                ? { color: "var(--text)", borderColor: "var(--accent)", boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent)" }
+                : { color: "var(--muted)", borderColor: "transparent" }}>
               {n.label}
             </a>
-          ))}
-        </nav>
-        <h1 className="text-3xl font-bold tracking-tight mb-4">{content.title}</h1>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+export default function ContentPage({ content, current }: { content: Content; current: string }) {
+  return (
+    <div className="min-h-screen p-3 md:p-5 max-w-3xl mx-auto">
+      <DocNav current={current} />
+
+      <header className="mb-9">
+        <div className="label mb-3" style={{ color: "var(--accent)" }}>▸ FIELD MANUAL</div>
+        <h1 className="display text-[clamp(1.9rem,5vw,3rem)] mb-4">{content.title}</h1>
+        <div className="h-px w-full bg-[var(--line)] mb-5" />
         <div className="text-[15px] leading-relaxed text-[var(--muted)]">
           <Prose text={content.intro} />
         </div>
       </header>
 
-      <div className="space-y-8">
-        {content.sections.map((s) => (
+      <div className="space-y-9">
+        {content.sections.map((s, i) => (
           <section key={s.heading}>
-            <h2 className="text-lg font-semibold mb-2.5 text-[var(--text)]">{s.heading}</h2>
-            <div className="text-[15px] leading-relaxed text-[var(--muted)]">
+            <div className="flex items-baseline gap-2.5 mb-3">
+              <span className="mono text-[11px] tabular-nums text-[var(--dim)] shrink-0 pt-0.5">{String(i + 1).padStart(2, "0")}</span>
+              <h2 className="text-lg font-bold tracking-tight text-[var(--text)]">{s.heading}</h2>
+            </div>
+            <div className="text-[15px] leading-relaxed text-[var(--muted)] pl-[calc(11px+0.625rem)]">
               <Prose text={s.body} />
               {s.bullets && s.bullets.length > 0 && (
                 <ul className="mt-3 space-y-2">
-                  {s.bullets.map((b, i) => (
-                    <li key={i} className="pl-4 relative">
-                      <span className="absolute left-0 top-[0.6em] w-1.5 h-1.5 rounded-full bg-[var(--border-soft)]" />
+                  {s.bullets.map((b, j) => (
+                    <li key={j} className="pl-4 relative">
+                      <span className="mono absolute left-0 top-0" style={{ color: "var(--accent)" }}>▸</span>
                       {inline(b)}
                     </li>
                   ))}
@@ -78,14 +96,14 @@ export default function ContentPage({ content, current }: { content: Content; cu
         ))}
       </div>
 
-      <footer className="mt-12 pt-5 border-t border-[var(--border)] text-xs text-[var(--muted)]">
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-3">
+      <footer className="mt-12 pt-5 border-t border-[var(--line)] text-xs text-[var(--muted)]">
+        <div className="flex flex-wrap gap-x-1 gap-y-1.5 mb-3">
           {NAV.filter((n) => n.href !== current).map((n) => (
-            <a key={n.href} href={n.href} className="hover:text-[var(--text)] transition-colors">{n.label}</a>
+            <a key={n.href} href={n.href} className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">{n.label}</a>
           ))}
-          <a href="/privacy" className="hover:text-[var(--text)] transition-colors">Privacy</a>
+          <a href="/privacy" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">Privacy</a>
         </div>
-        <p>
+        <p className="mono text-[10px] leading-relaxed text-[var(--dim)]">
           This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not
           responsible for it (
           <a href="https://supercell.com/en/fan-content-policy/" className="underline hover:text-[var(--text)]"

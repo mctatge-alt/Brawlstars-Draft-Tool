@@ -5,19 +5,21 @@
 // the static markup, and visible even if the backend is cold or down.
 export default function SiteFooter({ blurb }: { blurb?: string }) {
   return (
-    <footer className="max-w-6xl mx-auto px-4 md:px-6 pb-6 mt-6 pt-4 border-t border-[var(--border)] text-center text-xs text-[var(--muted)]">
-      <nav className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mb-3 text-[13px]">
-        <a href="/guide" className="hover:text-[var(--text)] transition-colors">Draft guide</a>
-        <a href="/how-it-works" className="hover:text-[var(--text)] transition-colors">How it works</a>
-        <a href="/faq" className="hover:text-[var(--text)] transition-colors">FAQ</a>
-        <a href="/privacy" className="hover:text-[var(--text)] transition-colors">Privacy</a>
+    <footer className="max-w-[1240px] mx-auto px-3 md:px-5 pb-6 mt-6 pt-4 border-t border-[var(--line)] text-center text-xs text-[var(--muted)]">
+      <nav className="flex flex-wrap justify-center gap-x-1.5 gap-y-1.5 mb-3">
+        <a href="/guide" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">Draft guide</a>
+        <a href="/how-it-works" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">How it works</a>
+        <a href="/faq" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">FAQ</a>
+        <a href="/privacy" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">Privacy</a>
       </nav>
-      {blurb && <>{blurb} · </>}
-      This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not
-      responsible for it (
-      <a href="https://supercell.com/en/fan-content-policy/" className="underline hover:text-[var(--text)]"
-        target="_blank" rel="noopener noreferrer">Fan Content Policy</a>
-      )
+      <p className="mono text-[10px] leading-relaxed text-[var(--dim)] max-w-2xl mx-auto">
+        {blurb && <>{blurb} · </>}
+        This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not
+        responsible for it (
+        <a href="https://supercell.com/en/fan-content-policy/" className="underline hover:text-[var(--text)]"
+          target="_blank" rel="noopener noreferrer">Fan Content Policy</a>
+        )
+      </p>
     </footer>
   );
 }

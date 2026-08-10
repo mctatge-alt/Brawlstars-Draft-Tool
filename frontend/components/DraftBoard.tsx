@@ -12,9 +12,12 @@ const CLASS_COLOR: Record<string, string> = {
   Tank: "#e0566f", Assassin: "#b15be0", Controller: "#3b82f6", Marksman: "#3ec46d",
   Support: "#e8c34a", "Damage Dealer": "#e8843a", Artillery: "#39c3c0", Unclassified: "#6b7280",
 };
-const SEV_COLOR: Record<string, string> = { critical: "#e0566f", warn: "#e8c34a", info: "#5aa0ff" };
-// Ranked tier accent colors, low → high (matched to the in-game rank emblems:
-// Diamond cyan, Mythic purple, Legendary red, Masters brownish-red, Pro green)
+const CLASS_SHORT: Record<string, string> = {
+  Tank: "TANK", Assassin: "ASSN", Controller: "CTRL", Marksman: "MARK",
+  Support: "SUPP", "Damage Dealer": "DMG", Artillery: "ARTY", Unclassified: "UNCL",
+};
+const SEV_COLOR: Record<string, string> = { critical: "#ff3b30", warn: "#e8c34a", info: "#5aa0ff" };
+// Ranked tier accent colors, low → high (matched to the in-game rank emblems).
 const BRACKET_COLOR: Record<string, string> = {
   Bronze: "#c8814b", Silver: "#a7b6c8", Gold: "#e8c34a", Diamond: "#45d4e8",
   Mythic: "#b15be0", Legendary: "#e0566f", Masters: "#b9533a", Pro: "#34c759",
@@ -22,7 +25,6 @@ const BRACKET_COLOR: Record<string, string> = {
 const bracketColor = (b?: string | null) => (b && BRACKET_COLOR[b]) || "#e8c34a";
 
 const TIER_SUB: Record<string, number> = { I: 1, II: 2, III: 3 };
-// "Legendary II" -> { name: "Legendary", sub: 2 };  "Pro" -> { name: "Pro", sub: 0 }
 function splitTier(label: string): { name: string; sub: number } {
   const parts = label.trim().split(/\s+/);
   const last = parts[parts.length - 1];
@@ -34,29 +36,12 @@ function TierChevrons({ n }: { n: number }) {
   return (
     <span className="inline-flex flex-col items-center" style={{ gap: 1 }} aria-hidden="true">
       {Array.from({ length: n }).map((_, i) => (
-        <svg key={i} width="11" height="5" viewBox="0 0 11 5">
+        <svg key={i} width="10" height="4.5" viewBox="0 0 11 5">
           <polyline points="1.5,4 5.5,1.4 9.5,4" fill="none" stroke="currentColor"
-            strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       ))}
     </span>
-  );
-}
-
-// color-morphing "first pick" button — blue = you pick first, red = enemy first
-function FirstPickToggle({ wePickFirst, onToggle }: { wePickFirst: boolean; onToggle: () => void }) {
-  const c = wePickFirst
-    ? { bg: "#2e8bf0", glow: "rgba(46,139,240,0.6)", side: "You" }
-    : { bg: "#ef4d4d", glow: "rgba(239,77,77,0.6)", side: "Enemy" };
-  return (
-    <button onClick={onToggle}
-      className="firstpick-btn shine ml-auto shrink-0 relative overflow-hidden rounded-lg pl-3 pr-2 py-2 inline-flex items-center gap-2 text-white"
-      style={{ backgroundColor: c.bg, boxShadow: `0 8px 20px -8px ${c.glow}, inset 0 1px 0 rgba(255,255,255,0.28)` }}
-      title="Who picks first — click to switch"
-      aria-label={`First pick: ${c.side}. Click to switch.`}>
-      <span className="text-[11px] font-extrabold tracking-[0.16em] uppercase whitespace-nowrap">First pick</span>
-      <span className="text-[11px] font-bold leading-none w-14 text-center py-1 rounded-md bg-white/20">{c.side}</span>
-    </button>
   );
 }
 
@@ -67,15 +52,16 @@ type Step =
   | { kind: "pick"; side: "us" | "them"; slot: Slot; n: number }
   | { kind: "done" };
 
-const BAN_N = 6, TEAM_N = 3;
+const BAN_N = 6, TEAM_N = 3, PICK_N = 6;
 const ROSTER_POLL_MS = 5 * 60 * 1000; // re-check the player's roster/inventory every 5 min
 const PICK_ORDER = [0, 1, 1, 0, 0, 1]; // 1-2-2-1 snake; 0 = first-pick team
 // Ranks that draft "blind": a shared ban phase, then you pick your own team without ever
-// seeing the enemy's picks — no visible snake, no counter-picking. In Brawl Stars this is
-// Diamond and below; Mythic and up get the full reveal-and-counter draft.
+// seeing the enemy's picks. In Brawl Stars this is Diamond and below.
 const BLIND_PICK_BRACKETS = new Set(["Bronze", "Silver", "Gold", "Diamond"]);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
-const cssVars = (vars: Record<string, string>) => vars as React.CSSProperties;
+const two = (x: number) => Math.round(x * 100);
+const cssVars = (vars: Record<string, string | number | undefined>) => vars as React.CSSProperties;
+const scoreColor = (v: number) => (v >= 0.5 ? "var(--green)" : "var(--gold)");
 
 function pickSlotSequence(wePickFirst: boolean): { side: "us" | "them"; zone: Zone; index: number }[] {
   const seq: { side: "us" | "them"; zone: Zone; index: number }[] = [];
@@ -89,8 +75,40 @@ function pickSlotSequence(wePickFirst: boolean): { side: "us" | "them"; zone: Zo
   return seq;
 }
 
-// eased number that animates from 0 (on mount) or its previous value toward `target`
-function useCountUp(target: number, duration = 650) {
+// --- one-line rationale, synthesized client-side from the scored signals ---
+function pickReason(r: PickRec): string {
+  // gaps are loadout warnings ("no star power"), shown as tags — not a positive reason.
+  const c: [number, string][] = [];
+  if (r.counter != null) c.push([r.counter - 0.5, "counters the enemy"]);
+  if (r.synergy != null) c.push([r.synergy - 0.5, "synergy with your team"]);
+  c.push([r.map_winrate - 0.5, "top winrate on this map"]);
+  if (r.personal_winrate != null && (r.personal_games ?? 0) >= 3) c.push([(r.personal_winrate - 0.5) * 1.1, "your proven pick"]);
+  if (r.mastery != null) c.push([(r.mastery - 0.5) * 0.7, "high mastery"]);
+  if (r.win_prob != null) c.push([(r.win_prob - 0.5) * 0.8, "the model favors it"]);
+  c.sort((a, b) => b[0] - a[0]);
+  return c[0] && c[0][0] > 0.004 ? c[0][1] : "balanced pick here";
+}
+function banReason(r: BanRec): string {
+  const strong = r.map_winrate >= 0.53, popular = r.use_rate >= 0.2;
+  if (strong && popular) return "high pick rate, wins here";
+  if (popular) return "very popular pick";
+  if (strong) return "strong on this map";
+  return "known meta threat";
+}
+// present signals for a pick, in a stable display order
+function pickSignals(r: PickRec): { k: string; v: number }[] {
+  const s: { k: string; v: number }[] = [{ k: "MAP", v: r.map_winrate }];
+  if (r.synergy != null) s.push({ k: "SYN", v: r.synergy });
+  if (r.counter != null) s.push({ k: "CTR", v: r.counter });
+  s.push({ k: "ROLE", v: r.role_fit });
+  if (r.win_prob != null) s.push({ k: "MDL", v: r.win_prob });
+  if (r.mastery != null) s.push({ k: "MST", v: r.mastery });
+  if (r.personal_winrate != null) s.push({ k: "YOU", v: r.personal_winrate });
+  return s;
+}
+
+// eased number that animates toward `target` — a readout "locking in"
+function useCountUp(target: number, duration = 420) {
   const [val, setVal] = useState(0);
   const fromRef = useRef(0);
   const rafRef = useRef(0);
@@ -101,7 +119,7 @@ function useCountUp(target: number, duration = 650) {
     const tick = (now: number) => {
       if (!startTs) startTs = now;
       const t = Math.min(1, (now - startTs) / duration);
-      const e = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      const e = 1 - Math.pow(1 - t, 3);
       setVal(from + (target - from) * e);
       if (t < 1) rafRef.current = requestAnimationFrame(tick);
       else fromRef.current = target;
@@ -111,32 +129,59 @@ function useCountUp(target: number, duration = 650) {
   }, [target, duration]);
   return val;
 }
-
 function CountUp({ value, className }: { value: number; className?: string }) {
   const v = useCountUp(value);
   return <span className={className}>{Math.round(v).toLocaleString()}</span>;
 }
 
-function Bar({ label, value }: { label: string; value: number }) {
-  const w = Math.max(2, Math.min(100, (value - 0.35) / 0.30 * 100));
+function Avatar({ b, size = 56, dim, ring, active }: { b?: Brawler; size?: number; dim?: boolean; ring?: string; active?: boolean }) {
+  const border = ring || (b ? CLASS_COLOR[b.cls] || "#26303f" : "#26303f");
+  const cls = `object-cover ${active ? "slot-active" : ""}`;
+  if (!b) return <div style={{ width: size, height: size, borderColor: border }} className="bg-[var(--panel2)] border" />;
   return (
-    <div className="flex items-center gap-2 text-[11px]">
-      <span className="w-14 text-right text-[var(--muted)] capitalize">{label}</span>
-      <div className="flex-1 h-1.5 rounded bg-[#0c1119] overflow-hidden">
-        <div className="h-full rounded bar-fill" style={{ width: `${w}%`, background: value >= 0.5 ? "#3ec46d" : "#e0566f" }} />
-      </div>
-      <span className="w-9 tabular-nums text-[var(--muted)]">{value.toFixed(2)}</span>
+    <img src={b.image_url} alt={b.name} title={b.name} width={size} height={size}
+      className={cls}
+      style={cssVars({ width: `${size}px`, height: `${size}px`, opacity: dim ? "0.3" : "1", border: `1px solid ${border}`, "--ring": border })} />
+  );
+}
+
+// thin squared telemetry meter with a key + numeric readout
+function Meter({ k, v }: { k: string; v: number }) {
+  const w = Math.max(3, Math.min(100, ((v - 0.35) / 0.30) * 100));
+  const good = v >= 0.5;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="mono w-9 shrink-0 text-[9px] tracking-[0.12em] text-[var(--dim)]">{k}</span>
+      <div className="meter flex-1"><i style={{ width: `${w}%`, background: good ? "var(--green)" : "var(--red)" }} /></div>
+      <span className="mono w-6 text-right text-[10px] tabular-nums" style={{ color: good ? "var(--green)" : "var(--muted)" }}>{two(v)}</span>
     </div>
   );
 }
 
-function Avatar({ b, size = 56, dim, ring, className }: { b?: Brawler; size?: number; dim?: boolean; ring?: string; className?: string }) {
-  const border = ring || (b ? CLASS_COLOR[b.cls] || "#26303f" : "#26303f");
-  if (!b) return <div style={{ width: size, height: size, borderColor: border }} className={`rounded-lg bg-[#0c1119] border ${className || ""}`} />;
+// compact inline "CTR 61" signal chips for the ranked list rows
+function SigLine({ sig }: { sig: { k: string; v: number }[] }) {
   return (
-    <img src={b.image_url} alt={b.name} title={b.name} width={size} height={size}
-      className={`rounded-lg object-cover border ${className || ""}`}
-      style={{ width: size, height: size, opacity: dim ? 0.3 : 1, borderColor: border }} />
+    <span className="mono text-[10px] tabular-nums text-[var(--dim)]">
+      {sig.map((s, i) => (
+        <span key={s.k}>
+          {i > 0 && <span className="text-[var(--line-strong)]"> · </span>}
+          {s.k} <span style={{ color: s.v >= 0.5 ? "var(--green)" : "var(--muted)" }}>{two(s.v)}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function FirstPickToggle({ wePickFirst, onToggle }: { wePickFirst: boolean; onToggle: () => void }) {
+  const c = wePickFirst ? { col: "var(--blue)", side: "YOU" } : { col: "var(--red)", side: "ENEMY" };
+  return (
+    <button onClick={onToggle}
+      className="seg ml-auto shrink-0 inline-flex items-center gap-2 px-2.5 py-2" data-on="true"
+      style={cssVars({ "--seg-c": c.col })}
+      title="Who picks first · click to switch">
+      <span className="text-[10px] tracking-[0.16em]">FIRST PICK</span>
+      <span className="text-[11px] font-bold px-2 py-0.5" style={{ background: c.col, color: "#0a0a0c" }}>{c.side}</span>
+    </button>
   );
 }
 
@@ -145,44 +190,42 @@ function RankWidget({ tag, setTag, rankInfo, loading, onCheck, onClear }: {
   onCheck: () => void; onClear: () => void;
 }) {
   return (
-    <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 px-4 py-3 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 anim-fade-up" style={{ animationDelay: "60ms" }}>
-      {/* A real <form> with a named, autocomplete-enabled input lets the browser remember the tag
-          and offer it back as a native suggestion on the next visit. The value is also persisted to
-          localStorage by the parent, which pre-fills it and auto-loads the rank on return. */}
+    <div className="panel px-3 py-2.5 mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="label">◇ Player</span>
       <form className="flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); onCheck(); }}>
         <div className="relative flex items-center">
           <input value={tag} onChange={(e) => setTag(e.target.value.toUpperCase())}
             id="bs-player-tag" name="bs-player-tag" autoComplete="on"
             autoCapitalize="characters" spellCheck={false} enterKeyHint="search"
-            placeholder="Tag (#GZ95SFSKJ3)"
-            className="bg-[var(--panel2)] border border-[var(--border)] rounded-md pl-2.5 pr-7 py-1.5 text-sm w-48 outline-none focus:border-[var(--accent)] ctl" />
+            placeholder="#GZ95SFSKJ3"
+            className="mono bg-[var(--panel2)] border border-[var(--line)] pl-2.5 pr-7 py-1.5 text-[13px] w-44 outline-none focus:border-[var(--accent)] ctl" />
           {tag && (
             <button type="button" onClick={onClear} aria-label="Forget saved tag" title="Forget saved tag"
-              className="absolute right-1.5 grid place-items-center w-5 h-5 rounded-full leading-none text-[var(--muted)] hover:text-[#e0566f] ctl">
+              className="absolute right-1.5 grid place-items-center w-5 h-5 leading-none text-[var(--muted)] hover:text-[var(--red)] ctl">
               ✕
             </button>
           )}
         </div>
         <button type="submit" disabled={loading || !tag.trim()}
-          className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)] disabled:opacity-50 ctl">
-          {loading ? "…" : "Enter ↵"}
+          className="seg px-3 py-1.5 disabled:opacity-40">
+          {loading ? "…" : "LOAD ↵"}
         </button>
       </form>
       {rankInfo?.found && rankInfo.tier_label && (() => {
         const c = bracketColor(rankInfo.bracket);
         const { name, sub } = splitTier(rankInfo.tier_label!);
         return (
-          <span className="ml-auto text-sm px-2.5 py-1 rounded-full font-semibold shine anim-pop inline-flex items-center gap-1.5"
-            style={{ background: c + "22", color: c, boxShadow: `0 0 18px -6px ${c}` }}
+          <span className="mono ml-auto text-[12px] px-2.5 py-1 font-semibold inline-flex items-center gap-1.5 border"
+            style={{ background: c + "18", color: c, borderColor: c + "66" }}
             aria-label={rankInfo.tier_label!}
-            title={(rankInfo.tier_label! + (rankInfo.source === "live" ? " — from a live lookup" : " — from our match data"))}>
-            {name}
+            title={(rankInfo.tier_label! + (rankInfo.source === "live" ? " · from a live lookup" : " · from our match data"))}>
+            {name.toUpperCase()}
             {sub > 0 && <TierChevrons n={sub} />}
           </span>
         );
       })()}
       {rankInfo && !rankInfo.found && (
-        <span className="ml-auto text-xs text-[var(--muted)]">{rankInfo.error || "tag not found"}</span>
+        <span className="mono ml-auto text-[11px] text-[var(--muted)]">{(rankInfo.error || "tag not found").toUpperCase()}</span>
       )}
     </div>
   );
@@ -192,41 +235,45 @@ function MetaBanner({ meta }: { meta: Meta }) {
   const buffs = meta.shifts.filter((s) => s.kind === "buff").slice(0, 3).map((s) => s.name);
   const nerfs = meta.shifts.filter((s) => s.kind === "nerf").slice(0, 3).map((s) => s.name);
   const parts: string[] = [];
-  if (meta.new_brawlers.length) parts.push(`new: ${meta.new_brawlers.join(", ")}`);
+  if (meta.new_brawlers.length) parts.push(`NEW ${meta.new_brawlers.join(", ")}`);
   if (buffs.length) parts.push(`▲ ${buffs.join(", ")}`);
   if (nerfs.length) parts.push(`▼ ${nerfs.join(", ")}`);
   return (
-    <div className="relative overflow-hidden rounded-lg px-4 py-2.5 mb-4 flex items-center gap-3 anim-fade-up"
-      style={{ background: "#e8c34a18", border: "1px solid #e8c34a55" }}>
-      <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: "#e8c34a" }} />
-      <span className="text-lg floaty">📈</span>
-      <div>
-        <div className="font-semibold text-sm" style={{ color: "#e8c34a" }}>
-          Meta shift detected — stats are catching up to the live meta
-        </div>
-        <div className="text-xs text-[var(--muted)]">{parts.join(" · ") || "recent balance change"}</div>
-      </div>
+    <div className="panel relative overflow-hidden px-3 py-2 mb-3 flex items-center gap-3"
+      style={{ borderColor: "#e8c34a66" }}>
+      <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: "var(--gold)" }} />
+      <span className="label shrink-0" style={{ color: "var(--gold)" }}>▲ Meta shift</span>
+      <span className="mono text-[11px] text-[var(--muted)] truncate">
+        {parts.join("  ·  ").toUpperCase() || "RECENT BALANCE CHANGE"}
+      </span>
+      <span className="mono text-[10px] text-[var(--dim)] ml-auto shrink-0 hidden sm:inline">STATS CATCHING UP</span>
     </div>
   );
 }
 
-function StatusBanner({ step }: { step: Step }) {
-  const cfg =
-    step.kind === "ban"
-      ? { color: "#e0566f", icon: "🚫", text: `Ban phase — ban ${step.index} of ${BAN_N}`, sub: "Tap a brawler to ban it" }
-      : step.kind === "done"
-      ? { color: "#3ec46d", icon: "✓", text: "Draft complete", sub: "Your game plan is below" }
-      : step.side === "us"
-      ? { color: "#3b82f6", icon: "🔵", text: "Your pick", sub: "Tap a recommendation, or any brawler" }
-      : { color: "#e0566f", icon: "🔴", text: "Enemy's pick", sub: "Tap the brawler they chose" };
+// The big command readout: whose turn, what phase, and the static per-action time budget.
+// The 20s marker is the in-game draft window (a reference, not a running timer).
+function StatusReadout({ step, tag, title, sub, accent, window }: {
+  step: Step; tag: string; title: string; sub: string; accent: string; window: string;
+}) {
   return (
-    <div className="relative overflow-hidden rounded-lg px-4 py-2.5 mb-4 flex items-center gap-3 anim-fade-up"
-      style={{ background: cfg.color + "18", border: `1px solid ${cfg.color}55` }}>
-      <span className="absolute left-0 top-0 bottom-0 w-[3px] slot-current" style={cssVars({ "--ring": cfg.color, background: cfg.color })} />
-      <span className="text-lg floaty">{cfg.icon}</span>
-      <div>
-        <div className="font-semibold text-sm" style={{ color: cfg.color }}>{cfg.text}</div>
-        <div className="text-xs text-[var(--muted)]">{cfg.sub}</div>
+    <div className="panel relative overflow-hidden anim-fade" style={{ borderColor: accent + "66" }}>
+      <span className="absolute left-0 top-0 bottom-0 w-1 slot-active" style={cssVars({ "--ring": accent, background: accent })} />
+      <div className="flex items-center gap-3 md:gap-4 pl-4 pr-3 py-2.5">
+        <span className="mono text-[12px] px-2 py-1 border shrink-0 tabular-nums" style={{ borderColor: accent, color: accent }}>{tag}</span>
+        <div className="min-w-0 flex-1">
+          <div className="display text-lg md:text-xl leading-none" style={{ color: accent }}>{title}</div>
+          <div className="label mt-1 truncate">{sub}</div>
+        </div>
+        {step.kind !== "done" && (
+          <div className="text-right shrink-0 pl-2 border-l border-[var(--line)]"
+            title="You get about 20 seconds per action in a ranked draft. This is that budget, not a live timer.">
+            <div className="mono text-[9px] tracking-[0.15em] text-[var(--dim)]">{window}</div>
+            <div className="mono font-bold text-2xl leading-none tabular-nums text-[var(--muted)]">
+              20<span className="text-[12px] text-[var(--dim)]">S</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -234,44 +281,33 @@ function StatusBanner({ step }: { step: Step }) {
 
 function Spinner() {
   return (
-    <span
-      className="inline-block w-9 h-9 rounded-full animate-spin"
-      style={{ border: "3px solid var(--border)", borderTopColor: "var(--accent)" }}
-      aria-hidden="true"
-    />
+    <span className="inline-block w-9 h-9 animate-spin"
+      style={{ border: "2px solid var(--line)", borderTopColor: "var(--accent)" }} aria-hidden="true" />
   );
 }
 
-// Shown while the board's reference data is still loading. On a warm backend this is a sub-
-// second blip (gated behind `show` so it never flashes), but the public API runs on Render's
-// free tier, which spins the dyno down after ~15 min idle and takes ~45s to boot the model +
-// replay stats. Say that, instead of leaving an empty board that reads as broken.
 function BootScreen({ show, error, onRetry }: { show: boolean; error: string | null; onRetry: () => void }) {
   return (
-    <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
-      <header className="flex flex-wrap items-center gap-3 mb-5 anim-fade-up">
-        <h1 className="text-xl font-bold tracking-tight mr-2">
-          <span className="inline-block floaty mr-1.5 align-[-0.35em]"><Logo /></span>
-          <span className="brand-gradient">Brawl Draft</span>{" "}
-          <span className="text-[var(--muted)] font-normal text-sm">ranked assistant</span>
-        </h1>
+    <div className="min-h-screen p-4 md:p-6 max-w-[1240px] mx-auto">
+      <header className="flex items-center gap-2.5 mb-5">
+        <Logo size={26} />
+        <span className="brand-gradient text-lg tracking-tight">BRAWL DRAFT</span>
+        <span className="label">// RANKED DRAFT CONSOLE</span>
       </header>
       <div className="min-h-[55vh] grid place-items-center">
         {error ? (
-          <div className="text-center anim-fade-up max-w-sm">
-            <div className="text-2xl mb-3">😕</div>
-            <div className="text-sm font-semibold text-[var(--text)] mb-1">Couldn’t reach the draft server</div>
-            <div className="text-xs text-[var(--muted)] mb-4 break-words">{error}</div>
-            <button onClick={onRetry} className="text-sm px-4 py-2 rounded-md border border-[var(--border)] bg-[var(--panel2)] ctl">
-              Retry
-            </button>
+          <div className="panel p-6 text-center max-w-sm anim-fade">
+            <div className="label mb-2" style={{ color: "var(--red)" }}>◇ LINK FAILURE</div>
+            <div className="text-sm font-semibold text-[var(--text)] mb-1">Couldn&rsquo;t reach the draft server</div>
+            <div className="mono text-[11px] text-[var(--muted)] mb-4 break-words">{error}</div>
+            <button onClick={onRetry} className="seg px-4 py-2">RETRY ↵</button>
           </div>
         ) : show ? (
-          <div className="text-center anim-fade-up">
+          <div className="text-center anim-fade">
             <Spinner />
-            <div className="mt-4 text-sm font-semibold text-[var(--text)]">Waking up the draft server…</div>
-            <div className="mt-1 text-xs text-[var(--muted)] max-w-xs mx-auto">
-              First visit can take ~30–45s on the free tier. Hang tight — it stays fast once it’s warm.
+            <div className="mt-4 mono text-[13px] font-semibold text-[var(--text)] caret">BOOTING DRAFT SERVER</div>
+            <div className="mt-2 mono text-[11px] text-[var(--muted)] max-w-xs mx-auto">
+              First hit can take ~30-45s on the free tier. It stays fast once warm.
             </div>
           </div>
         ) : null}
@@ -297,21 +333,18 @@ export default function DraftBoard() {
   const [solo, setSolo] = useState(true);
   const [recs, setRecs] = useState<RecommendResponse | null>(null);
   const [topPicks, setTopPicks] = useState<TopPick[]>([]);
-  const [railOk, setRailOk] = useState(true);  // hide the rail if the endpoint isn't available
+  const [railOk, setRailOk] = useState(true);
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [query, setQuery] = useState("");
   const [useSearch, setUseSearch] = useState(false);
   const [personalize, setPersonalize] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [bootNonce, setBootNonce] = useState(0);  // bump to re-attempt the first load
-  const [slowBoot, setSlowBoot] = useState(false); // gate the "waking up" screen behind a short delay
+  const [bootNonce, setBootNonce] = useState(0);
+  const [slowBoot, setSlowBoot] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearch = () => searchRef.current?.focus({ preventScroll: true });
 
-  // First load can hit a cold Render free-tier dyno (spun down after ~15 min idle), which takes
-  // ~45s to boot the model + replay stats and may 5xx the first request meanwhile. Retry the
-  // reference — the one fetch the board can't render without — with backoff instead of flashing
-  // an error, and pull the non-critical health/meta only once it's warm so they don't fail and
-  // never recover. Give up after ~90s (matches the keep-warm cap) and surface a retryable error.
   useEffect(() => {
     let cancelled = false;
     const started = Date.now();
@@ -342,23 +375,17 @@ export default function DraftBoard() {
     return () => { cancelled = true; };
   }, [bootNonce]);
 
-  // Don't flash the "waking up" screen on a warm load (~200ms); only reveal it once the boot is
-  // visibly slow, which in practice means the dyno was asleep.
   useEffect(() => {
     if (ref || err) { setSlowBoot(false); return; }
     const t = setTimeout(() => setSlowBoot(true), 500);
     return () => clearTimeout(t);
   }, [ref, err, bootNonce]);
 
-  // Personalize to whichever tag the visitor confirms in the rank widget (live roster fetch,
-  // so it works for any valid tag — not gated on being in our dataset). null falls back to the
-  // server's configured tag, which is how the local app personalizes out of the box.
+  // autofocus the keyboard-first placer once the board is live, so logging is instant
+  useEffect(() => { if (ref) focusSearch(); }, [ref]);
+
   const rosterTag = rankInfo?.tag ?? null;
 
-  // The roster (owned brawlers + loadout/mastery) only changes when the player unlocks or
-  // upgrades something, so a one-shot fetch can go stale in a long session. Refetch when the
-  // visitor's tag changes, then re-poll on an interval and when the tab regains focus; the
-  // backend caches it briefly, so this stays cheap on the live API.
   useEffect(() => {
     let cancelled = false;
     let last = 0;
@@ -382,8 +409,6 @@ export default function DraftBoard() {
   }, [ref]);
   const map = useMemo(() => ref?.maps.find((m) => m.id === mapId) || null, [ref, mapId]);
   const mode = map?.mode || "";
-  // Diamond and below draft blind — drives the board layout (no enemy zone), the pick order
-  // (no snake), and the request (no enemy team, no seat-aware search). Mythic+ keeps the snake.
   const blindPick = !!(rankInfo?.found && rankInfo.bracket && BLIND_PICK_BRACKETS.has(rankInfo.bracket));
   const used = useMemo(
     () => new Set([...bans, ...our, ...(blindPick ? [] : their)].filter((x): x is number => x != null)),
@@ -391,14 +416,9 @@ export default function DraftBoard() {
   );
   const ownedSet = useMemo(() => new Set((roster?.owned || []).map((o) => o.id)), [roster]);
   const personalizeReady = !!roster?.loaded;
-  // recommendations are tuned to the player's own rank bracket (null = all ranks)
   const bracket = rankInfo?.found ? rankInfo.bracket : null;
-  // once the player's tag is confirmed, fold in their own win rates (resolved from our data,
-  // so it works without an API key); null leaves picks at the population meta.
   const personalTag = rankInfo?.found ? rankInfo.tag : null;
 
-  // --- draft order: ban×6 → 1-2-2-1 snake (by first pick). The active slot is the
-  //     slot the user clicked if it's still empty, else the next empty slot in order. ---
   const pickSeq = useMemo(
     () => blindPick
       ? Array.from({ length: TEAM_N }, (_, index) => ({ side: "us" as const, zone: "our" as const, index }))
@@ -420,9 +440,13 @@ export default function DraftBoard() {
     return { kind: "pick", side: active.zone === "our" ? "us" : "them", slot: active, n: 0 };
   }, [active]);
   const phase: "ban" | "pick" = step.kind === "ban" ? "ban" : "pick";
+  // overall step position → pick number within the 6-pick snake
+  const orderPos = useMemo(
+    () => (active ? order.findIndex((s) => s.zone === active.zone && s.index === active.index) : -1),
+    [active, order]
+  );
+  const pickNo = orderPos >= 0 ? orderPos - BAN_N + 1 : 0;
 
-  // Blind ranks never reveal the enemy: drop any enemy picks carried over from a snake-rank
-  // session so they don't linger on the board, in `used`, or in the request.
   useEffect(() => {
     if (blindPick && their.some((x) => x != null)) {
       setTheir(Array(TEAM_N).fill(null));
@@ -441,8 +465,6 @@ export default function DraftBoard() {
       we_pick_first: wePickFirst, solo_queue: solo, phase,
       use_search: blindPick ? false : useSearch, personalize: usePersonal,
       personal_tag: personalTag,
-      // Ship the roster so the backend can actually personalize (it can't fetch it itself).
-      // Without this the suggestions stay the pure meta even with Personalize on.
       roster: usePersonal ? roster?.owned ?? null : null,
       rank_bracket: bracket, top: 12,
     };
@@ -456,10 +478,6 @@ export default function DraftBoard() {
     return () => clearTimeout(t);
   }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, roster, bracket, personalTag, blindPick]);
 
-  // "Full-loadout" rail: strongest picks for the current board with no roster — the pure
-  // population meta. It re-ranks as the draft fills in (used brawlers drop out, synergy/
-  // counters fold in), so it tracks the same board state as the recommendations but never
-  // personalizes. Debounced like recommend to coalesce rapid board changes.
   useEffect(() => {
     if (!mapId || !mode) return;
     const body = {
@@ -485,12 +503,12 @@ export default function DraftBoard() {
     else setTheir(apply);
   };
 
-  // pick a brawler → fill the active slot, then fall back to next-in-order
   const place = (bid: number) => {
     if (!active || used.has(bid)) return;
     setZone(active.zone, active.index, bid);
     setActiveOverride(null);
     setQuery("");
+    focusSearch();
   };
 
   const reset = () => {
@@ -498,6 +516,7 @@ export default function DraftBoard() {
     setOur(Array(TEAM_N).fill(null));
     setTheir(Array(TEAM_N).fill(null));
     setActiveOverride(null);
+    focusSearch();
   };
 
   const checkRank = async () => {
@@ -518,9 +537,6 @@ export default function DraftBoard() {
     }
   };
 
-  // Forget the remembered tag: empty the field, drop the rank badge, and clear the persisted
-  // value so the next visit starts blank. Personalization falls back to the server default
-  // once rosterTag/personalTag go null.
   const clearTag = () => {
     setTag("");
     setRankInfo(null);
@@ -538,6 +554,13 @@ export default function DraftBoard() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [ref, query]);
 
+  const placeable = (id: number) => !used.has(id) && !(personalize && personalizeReady && !ownedSet.has(id));
+  // the brawler Enter will place: first valid match for the current query
+  const topMatch = useMemo(
+    () => (query.trim() && step.kind !== "done" ? filtered.find((b) => placeable(b.id)) : undefined),
+    [query, filtered, used, personalize, personalizeReady, ownedSet, step.kind]
+  );
+
   const rotation = useMemo(
     () => (ref?.maps || []).filter((m) => m.games > 0).sort((a, b) =>
       a.mode === b.mode ? b.games - a.games : a.mode.localeCompare(b.mode)),
@@ -547,175 +570,219 @@ export default function DraftBoard() {
   const isCurrent = (zone: Zone, index: number) =>
     step.kind !== "done" && step.slot.zone === zone && step.slot.index === index;
 
-  const SlotBox = ({ zone, index, accent }: { zone: Zone; index: number; accent: string }) => {
+  const SlotBox = ({ zone, index, accent, size = 56 }: { zone: Zone; index: number; accent: string; size?: number }) => {
     const arr = zone === "ban" ? bans : zone === "our" ? our : their;
     const bid = arr[index];
     const b = bid != null ? byId.get(bid) : undefined;
     const current = isCurrent(zone, index);
+    const idLabel = `${zone === "ban" ? "BAN" : zone === "our" ? "A" : "E"}${zone === "ban" ? String(index + 1).padStart(2, "0") : index + 1}`;
     return (
       <button
-        onClick={() => {
-          if (bid != null) setZone(zone, index, null);
-          setActiveOverride({ zone, index });
-        }}
-        className={`relative shrink-0 rounded-lg transition ${current ? "slot-current" : ""}`}
-        style={current ? cssVars({ "--ring": accent }) : undefined}
-        title={b ? `${b.name} — click to replace` : "click to pick this slot"}
-      >
-        <span key={bid ?? "empty"} className="block anim-pop">
-          <Avatar b={b} size={zone === "ban" ? 44 : 60} dim={zone === "ban"} ring={current ? accent : undefined} />
+        onClick={() => { if (bid != null) setZone(zone, index, null); setActiveOverride({ zone, index }); focusSearch(); }}
+        className="relative shrink-0 group"
+        title={b ? `${b.name} · click to clear & make active` : "click to make this the active slot"}>
+        <span key={bid ?? "empty"} className="block anim-snap">
+          {b
+            ? <Avatar b={b} size={size} dim={zone === "ban"} ring={current ? accent : undefined} active={current} />
+            : <span className={`slot grid place-items-center ${current ? "slot-active" : ""}`}
+                style={cssVars({ width: `${size}px`, height: `${size}px`, "--ring": accent, borderColor: current ? accent : "var(--line)" })}>
+                <span className="text-base" style={{ color: current ? accent : "var(--dim)" }}>+</span>
+              </span>}
         </span>
-        {bid == null && (
-          <span className="absolute inset-0 grid place-items-center text-lg" style={{ color: current ? accent : "var(--muted)" }}>+</span>
-        )}
+        <span className="mono absolute -bottom-4 left-0 text-[8px] tracking-[0.1em]"
+          style={{ color: current ? accent : "var(--dim)" }}>{idLabel}</span>
       </button>
     );
   };
 
-  const recTitle =
-    step.kind === "ban" ? "Ban suggestions"
-    : step.kind === "done" ? "Draft complete"
-    : step.side === "us" ? "Your pick — suggestions"
-    : "Strong picks here";
-
-  // The board can't render without the reference; block on it (retrying/warming behind the
-  // scenes) rather than laying out an empty board. Everything else loads in progressively.
   if (!ref)
     return (
-      <BootScreen
-        show={slowBoot}
-        error={err}
-        onRetry={() => { setErr(null); setSlowBoot(false); setBootNonce((n) => n + 1); }}
-      />
+      <BootScreen show={slowBoot} error={err}
+        onRetry={() => { setErr(null); setSlowBoot(false); setBootNonce((n) => n + 1); }} />
     );
 
+  // ---- status readout config ----
+  const statusCfg =
+    step.kind === "ban"
+      ? { tag: `BAN ${String(step.index).padStart(2, "0")}/0${BAN_N}`, title: "BAN PHASE", sub: "Ban a threat · tap a suggestion or type to place", accent: "var(--red)", window: "BAN WINDOW" }
+      : step.kind === "done"
+      ? { tag: "DRAFT SET", title: "DRAFT COMPLETE", sub: "Game plan is locked in below", accent: "var(--green)", window: "" }
+      : step.side === "us"
+      ? { tag: `PICK ${pickNo}/0${PICK_N}`, title: "YOUR PICK", sub: "Lock a recommendation, or type any brawler + ⏎", accent: "var(--blue)", window: "PICK WINDOW" }
+      : { tag: `PICK ${pickNo}/0${PICK_N}`, title: "ENEMY PICK", sub: "Log the enemy's choice · type + ⏎ is fastest", accent: "var(--red)", window: "PER PICK" };
+
+  const recTitle = step.kind === "ban" ? "BAN TARGETS" : step.kind === "done" ? "COMPLETE" : step.side === "us" ? "PICK ORDERS" : "STRONG HERE";
+  const callAccent = step.kind === "ban" ? "var(--red)" : step.kind === "pick" && step.side === "them" ? "var(--red)" : "var(--blue)";
+
+  const pickList = recs?.picks || [];
+  const banList = recs?.bans || [];
+  const topPick = phase === "pick" ? pickList[0] : undefined;
+  const topBan = phase === "ban" ? banList[0] : undefined;
+
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <header className="flex flex-wrap items-center gap-3 mb-5 anim-fade-up">
-        <h1 className="text-xl font-bold tracking-tight mr-2">
-          <span className="inline-block floaty mr-1.5 align-[-0.35em]"><Logo /></span>
-          <span className="brand-gradient">Brawl Draft</span>{" "}
-          <span className="text-[var(--muted)] font-normal text-sm">ranked assistant</span>
-        </h1>
-        <select
-          value={mapId ?? ""} onChange={(e) => setMapId(Number(e.target.value))}
-          className="bg-[var(--panel2)] border border-[var(--border)] rounded-md px-3 py-1.5 text-sm ctl">
+    <div className="p-3 md:p-5 max-w-[1240px] mx-auto">
+      {/* ===== COMMAND BAR ===== */}
+      <header className="panel flex flex-wrap items-center gap-2 px-3 py-2.5 mb-3">
+        <div className="flex items-center gap-2 mr-1">
+          <Logo size={24} />
+          <span className="brand-gradient text-[15px]">BRAWL DRAFT</span>
+          <span className="label hidden md:inline">// CONSOLE</span>
+        </div>
+        <select value={mapId ?? ""} onChange={(e) => setMapId(Number(e.target.value))}
+          className="mono ctl bg-[var(--panel2)] border border-[var(--line)] pl-2.5 pr-7 py-1.5 text-[12px] max-w-[240px]">
           {rotation.map((m) => (
-            <option key={m.id} value={m.id}>{m.mode} — {m.name}</option>
+            <option key={m.id} value={m.id}>{m.mode.toUpperCase()} · {m.name}</option>
           ))}
         </select>
-        <button onClick={() => setSolo((v) => !v)}
-          className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--panel2)] ctl">
-          {solo ? "Solo queue" : "Premade"}
+        <button onClick={() => setSolo((v) => !v)} data-on="true" className="seg px-2.5 py-1.5"
+          style={cssVars({ "--seg-c": "var(--line-strong)" })}>
+          {solo ? "SOLO Q" : "PREMADE"}
         </button>
         {!blindPick && (
-          <button onClick={() => setUseSearch((v) => !v)}
-            className="text-sm px-3 py-1.5 rounded-md border bg-[var(--panel2)] ctl"
-            style={{ borderColor: useSearch ? "#3ec46d" : "var(--border)", color: useSearch ? "#3ec46d" : "var(--muted)", boxShadow: useSearch ? "0 0 16px -5px #3ec46d, inset 0 0 0 1px #3ec46d33" : undefined }}
+          <button onClick={() => setUseSearch((v) => !v)} data-on={useSearch ? "true" : "false"}
+            className="seg px-2.5 py-1.5" style={cssVars({ "--seg-c": "var(--green)" })}
             title="Seat-aware minimax lookahead over the remaining snake">
-            🔮 Deep search {useSearch ? "on" : "off"}
+            ⟲ DEEP SEARCH {useSearch ? "ON" : "OFF"}
           </button>
         )}
-        <button onClick={() => personalizeReady && setPersonalize((v) => !v)}
-          disabled={!personalizeReady}
-          className="text-sm px-3 py-1.5 rounded-md border bg-[var(--panel2)] disabled:opacity-40 ctl"
-          style={{ borderColor: personalize ? "#e8c34a" : "var(--border)", color: personalize ? "#e8c34a" : "var(--muted)", boxShadow: personalize ? "0 0 16px -5px #e8c34a, inset 0 0 0 1px #e8c34a33" : undefined }}
+        <button onClick={() => personalizeReady && setPersonalize((v) => !v)} disabled={!personalizeReady}
+          data-on={personalize ? "true" : "false"} className="seg px-2.5 py-1.5 disabled:opacity-40"
+          style={cssVars({ "--seg-c": "var(--gold)" })}
           title={personalizeReady ? `Personalize to ${roster?.name}'s roster & mastery` : "no roster loaded"}>
-          👤 {personalize && roster?.name ? roster.name : "Personalize"}{personalizeReady ? (personalize ? " ✓" : "") : " —"}
+          ◈ {personalize && roster?.name ? roster.name.toUpperCase() : "PERSONALIZE"}{personalizeReady ? (personalize ? " ✓" : "") : " —"}
         </button>
-        <div className="ml-auto flex items-center gap-3">
-          <span className="text-xs text-[var(--muted)] flex items-center gap-1"
-            title="Ranked matches in the live dataset — auto-refreshes every few minutes">
-            {health != null && <>📊 <CountUp value={health.matches} className="tabular-nums text-[var(--text)] font-semibold" /> matches analyzed</>}
-          </span>
-          <button onClick={reset} className="text-sm px-3 py-1.5 rounded-md border border-[var(--border)] text-[var(--muted)] ctl">
-            Reset
-          </button>
+        <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-3">
+          {health != null && (
+            <span className="mono text-[11px] flex items-center gap-1.5 tabular-nums"
+              title="Ranked matches in the live dataset · auto-refreshes every few minutes">
+              <span className="live-dot w-1.5 h-1.5 inline-block" style={{ background: "var(--green)" }} />
+              <span className="text-[var(--dim)] hidden sm:inline">ONLINE ·</span>
+              <CountUp value={health.matches} className="text-[var(--green)] font-semibold" />
+              <span className="text-[var(--dim)]">MATCHES</span>
+            </span>
+          )}
+          <button onClick={reset} className="seg px-2.5 py-1.5">RESET</button>
         </div>
       </header>
 
       <RankWidget tag={tag} setTag={setTag} rankInfo={rankInfo} loading={rankLoading} onCheck={checkRank} onClear={clearTag} />
 
-      {err && <div className="mb-4 text-sm text-[#e0566f]">Couldn’t fetch suggestions — {err}</div>}
-
+      {err && <div className="panel px-3 py-2 mb-3 mono text-[12px]" style={{ borderColor: "var(--red)", color: "var(--red)" }}>◇ {err}</div>}
       {meta?.shifted && <MetaBanner meta={meta} />}
-      <StatusBanner key={step.kind === "pick" ? `pick-${step.side}-${step.slot.index}` : step.kind} step={step} />
 
-      <div className={`grid gap-5 ${railOk ? "lg:grid-cols-[1fr_360px_auto]" : "lg:grid-cols-[1fr_360px]"}`}>
-        {/* LEFT: board + picker */}
-        <div>
-          <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-4 mb-4 anim-fade-up" style={{ animationDelay: "120ms" }}>
-            <div className="flex items-center gap-3 mb-4">
+      <div className="mb-3">
+        <StatusReadout step={step} {...statusCfg} />
+      </div>
+
+      {/* ===== MAIN GRID: [board + placer] | [the call + meta] ===== */}
+      <div className="grid gap-3 lg:grid-cols-[1fr_400px] items-start">
+        {/* LEFT */}
+        <div className="flex flex-col gap-3 min-w-0 order-2 lg:order-1">
+          {/* BOARD */}
+          <div className="panel p-3 order-2">
+            <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[var(--line)]">
               {map && (
                 <>
-                  <img src={map.image_url} alt={map.name} className="w-16 h-16 rounded-lg object-cover border border-[var(--border)]" />
-                  <div>
-                    <div className="font-semibold">{map.name}</div>
-                    <div className="text-sm text-[var(--muted)]">{map.mode} · {map.games.toLocaleString()} games</div>
+                  <img src={map.image_url} alt={map.name} className="w-14 h-14 object-cover border border-[var(--line)]" />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-[15px] truncate">{map.name}</div>
+                    <div className="mono text-[10px] text-[var(--muted)] tracking-wide">
+                      {map.mode.toUpperCase()} · {map.games.toLocaleString()} GAMES
+                    </div>
                   </div>
                 </>
               )}
               {blindPick ? (
-                <span className="ml-auto shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
-                  style={{ background: "#6b46d6", boxShadow: "0 8px 20px -8px rgba(107,70,214,0.6), inset 0 1px 0 rgba(255,255,255,0.28)" }}
-                  title="Diamond and below draft blind — a ban phase, then you pick your own team without seeing the enemy's. No snake draft, no counter-picking.">
-                  🙈 Blind pick
+                <span className="seg ml-auto shrink-0 inline-flex items-center gap-1.5 px-2.5 py-2" data-on="true"
+                  style={cssVars({ "--seg-c": "var(--violet)" })}
+                  title="Diamond and below draft blind: a ban phase, then you pick without seeing the enemy. No snake, no counter-picking.">
+                  🙈 BLIND PICK
                 </span>
               ) : (
                 <FirstPickToggle wePickFirst={wePickFirst} onToggle={() => setWePickFirst((v) => !v)} />
               )}
             </div>
-            <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Bans</div>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {bans.map((_, i) => <SlotBox key={i} zone="ban" index={i} accent="#e0566f" />)}
+
+            <div className="label mb-2" style={{ color: "var(--red)" }}>⊘ Bans</div>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {bans.map((_, i) => <SlotBox key={i} zone="ban" index={i} accent="var(--red)" size={48} />)}
             </div>
-            <div className={`grid grid-cols-1 gap-4 ${blindPick ? "" : "sm:grid-cols-2"}`}>
+
+            <div className={`grid grid-cols-1 gap-x-6 gap-y-6 ${blindPick ? "" : "sm:grid-cols-2"}`}>
               <div>
-                <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color: "#5aa0ff" }}>Your team</div>
-                <div className="flex gap-2">{our.map((_, i) => <SlotBox key={i} zone="our" index={i} accent="#3b82f6" />)}</div>
+                <div className="label mb-2" style={{ color: "var(--blue)" }}>◤ Your team</div>
+                <div className="flex gap-2">{our.map((_, i) => <SlotBox key={i} zone="our" index={i} accent="var(--blue)" />)}</div>
                 {blindPick && (
-                  <div className="text-[11px] text-[var(--muted)] mt-1.5">🙈 Enemy draft is hidden at Diamond — picks optimize your own comp on this map.</div>
+                  <div className="mono text-[10px] text-[var(--muted)] mt-5">🙈 ENEMY HIDDEN AT DIAMOND · PICKS OPTIMIZE YOUR OWN COMP.</div>
                 )}
               </div>
               {!blindPick && (
                 <div>
-                  <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color: "#ff7a7a" }}>Enemy team</div>
-                  <div className="flex gap-2">{their.map((_, i) => <SlotBox key={i} zone="their" index={i} accent="#e0566f" />)}</div>
+                  <div className="label mb-2" style={{ color: "var(--red)" }}>◢ Enemy team</div>
+                  <div className="flex gap-2">{their.map((_, i) => <SlotBox key={i} zone="their" index={i} accent="var(--red)" />)}</div>
                 </div>
               )}
             </div>
+
             {recs?.composition && Object.keys(recs.composition).length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-4 pt-3 border-t border-[var(--border)]">
-                <span className="text-xs text-[var(--muted)] mr-1">Your comp:</span>
+              <div className="flex flex-wrap gap-1.5 mt-6 pt-3 border-t border-[var(--line)] items-center">
+                <span className="label mr-1">Comp</span>
                 {Object.entries(recs.composition).map(([cls, n]) => (
-                  <span key={cls} className="text-[11px] px-2 py-0.5 rounded-full anim-pop"
-                    style={{ background: (CLASS_COLOR[cls] || "#333") + "22", color: CLASS_COLOR[cls] || "#aaa" }}>
-                    {cls}{n > 1 ? ` ×${n}` : ""}
+                  <span key={cls} className="mono text-[10px] px-2 py-0.5 border anim-snap"
+                    style={{ borderColor: (CLASS_COLOR[cls] || "#333") + "66", color: CLASS_COLOR[cls] || "#aaa" }}>
+                    {(CLASS_SHORT[cls] || cls).toUpperCase()}{n > 1 ? ` ×${n}` : ""}
                   </span>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-4 anim-fade-up" style={{ animationDelay: "180ms" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search brawlers…"
-                className="flex-1 bg-[var(--panel2)] border border-[var(--border)] rounded-md px-3 py-2 text-sm outline-none focus:border-[var(--accent)] ctl" />
-              {personalize && personalizeReady && <span className="text-xs text-[#e8c34a] whitespace-nowrap">owned only</span>}
+          {/* COMMAND INPUT — keyboard-first placer, pinned to the top of the column so your
+              fastest action (type + ⏎ to log a ban/pick) never needs a scroll */}
+          <div className="panel px-3 py-2 order-1">
+            <div className="flex items-center gap-2">
+              <span className="label shrink-0" style={{ color: "var(--accent)" }}>▸ INPUT</span>
+              <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); if (topMatch) place(topMatch.id); }
+                  else if (e.key === "Escape") setQuery("");
+                }}
+                placeholder="TYPE TO PLACE  ·  e.g.  bro ↵"
+                aria-label="Type a brawler name and press Enter to place it in the active slot"
+                className="mono flex-1 min-w-0 bg-transparent border-none px-1 py-2 text-[13px] tracking-wide outline-none placeholder:text-[var(--dim)]" />
+              {topMatch ? (
+                <span className="mono text-[11px] px-2 py-1 shrink-0 anim-fade flex items-center gap-1.5"
+                  style={{ background: "var(--accent)", color: "#0a0a0c" }}>
+                  ⏎ {topMatch.name.toUpperCase()}
+                </span>
+              ) : (
+                <span className="kbd shrink-0">⏎ PLACE</span>
+              )}
             </div>
-            <div className="grid grid-cols-6 sm:grid-cols-8 gap-2 max-h-[340px] overflow-y-auto pr-1">
+          </div>
+
+          {/* BRAWLER GRID — mouse / browse fallback, below the board */}
+          <div className="panel p-3 order-3">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="label">{filtered.length} BRAWLERS · TAP OR TYPE ABOVE</span>
+              {personalize && personalizeReady && <span className="mono text-[10px]" style={{ color: "var(--gold)" }}>◈ OWNED ONLY</span>}
+            </div>
+            <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
               {filtered.map((b) => {
                 const isUsed = used.has(b.id);
                 const unowned = personalize && personalizeReady && !ownedSet.has(b.id);
+                const isTop = topMatch?.id === b.id;
                 return (
                   <button key={b.id} onClick={() => place(b.id)} disabled={isUsed || unowned || step.kind === "done"}
-                    className="flex flex-col items-center gap-1 group disabled:cursor-not-allowed"
-                    title={unowned ? `${b.name} — not owned` : `${b.name} (${b.cls})`}>
-                    <span className="tile-img" style={cssVars({ "--c": CLASS_COLOR[b.cls] || "#26303f" })}>
-                      <Avatar b={b} size={48} dim={isUsed || unowned} />
+                    className="group relative disabled:cursor-not-allowed"
+                    title={unowned ? `${b.name} · not owned` : `${b.name} (${b.cls})`}>
+                    <span className="tile block p-[3px]"
+                      style={cssVars({ "--tc": CLASS_COLOR[b.cls] || "#26303f", borderColor: isTop ? "var(--accent)" : undefined, boxShadow: isTop ? "inset 0 0 0 1px var(--accent)" : undefined })}>
+                      <Avatar b={b} size={44} dim={isUsed || unowned} />
                     </span>
-                    <span className="text-[10px] truncate w-full text-center"
-                      style={{ color: unowned ? "#566173" : "var(--muted)" }}>{b.name}</span>
+                    {isTop && <span className="mono absolute top-0 right-0 text-[8px] px-1 leading-tight" style={{ background: "var(--accent)", color: "#0a0a0c" }}>⏎</span>}
+                    <span className="mono block text-[8px] truncate w-full text-center mt-0.5 tracking-tight"
+                      style={{ color: unowned ? "var(--dim)" : "var(--muted)" }}>{b.name}</span>
                   </button>
                 );
               })}
@@ -723,185 +790,230 @@ export default function DraftBoard() {
           </div>
         </div>
 
-        {/* RIGHT: warnings + recommendations */}
-        <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-4 h-fit lg:sticky lg:top-4 anim-fade-up" style={{ animationDelay: "240ms" }}>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">
-              {recTitle}
-              {loading && <span className="text-xs text-[var(--muted)] font-normal ml-2 animate-pulse">analyzing…</span>}
-            </h2>
-          </div>
-
-          {warnings.length > 0 && (
-            <div className="mb-3 space-y-1 rounded-lg bg-[var(--panel2)] p-2.5 anim-fade-in">
-              {warnings.map((w, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs">
-                  <span style={{ color: SEV_COLOR[w.severity] || "#888" }}>●</span>
-                  <span className="text-[var(--muted)]">{w.text}</span>
-                </div>
-              ))}
+        {/* RIGHT — THE CALL + ranked + top meta (sticky; first on mobile) */}
+        <div className="space-y-3 lg:sticky lg:top-3 h-fit order-1 lg:order-2">
+          <div className="panel">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--line)]">
+              <span className="label" style={{ color: callAccent }}>◆ {recTitle}</span>
+              {loading && <span className="mono text-[10px] text-[var(--muted)] caret">ANALYZING</span>}
             </div>
-          )}
 
-          <div className="space-y-2">
-            {step.kind === "done" && <div className="text-sm text-[var(--muted)]">✓ Draft set — see your game plan below.</div>}
-            {step.kind !== "done" && phase === "ban" &&
-              (recs?.bans || []).map((r, i) => <BanCard key={r.brawler_id} r={r} i={i} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
-            {step.kind !== "done" && phase === "pick" &&
-              (recs?.picks || []).map((r, i) => <PickCard key={r.brawler_id} r={r} i={i} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
-            {!recs && [0, 1, 2, 3].map((i) => <SkeletonCard key={i} />)}
+            {warnings.length > 0 && (
+              <div className="px-3 py-2 border-b border-[var(--line)] space-y-1 anim-fade">
+                {warnings.map((w, i) => (
+                  <div key={i} className="flex items-start gap-2 mono text-[10.5px]">
+                    <span style={{ color: SEV_COLOR[w.severity] || "#888" }}>▸</span>
+                    <span className="text-[var(--muted)]">{w.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {step.kind === "done" && (
+              <div className="p-4 mono text-[12px] text-[var(--muted)]">✓ DRAFT SET · SEE YOUR GAME PLAN BELOW.</div>
+            )}
+
+            {/* THE CALL — the dominant #1 read */}
+            {step.kind !== "done" && phase === "pick" && topPick && (
+              <TheCall kind="pick" r={topPick} b={byId.get(topPick.brawler_id)} accent={callAccent} onPlace={() => place(topPick.brawler_id)} />
+            )}
+            {step.kind !== "done" && phase === "ban" && topBan && (
+              <TheCall kind="ban" r={topBan} b={byId.get(topBan.brawler_id)} accent={callAccent} onPlace={() => place(topBan.brawler_id)} />
+            )}
+            {!recs && step.kind !== "done" && <CallSkeleton />}
+
+            {/* ranked runners-up */}
+            <div>
+              {step.kind !== "done" && phase === "pick" &&
+                pickList.slice(1).map((r, i) => <RankedPick key={r.brawler_id} r={r} i={i + 2} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
+              {step.kind !== "done" && phase === "ban" &&
+                banList.slice(1).map((r, i) => <RankedBan key={r.brawler_id} r={r} i={i + 2} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
+              {!recs && step.kind !== "done" && [0, 1, 2].map((i) => <RowSkeleton key={i} />)}
+            </div>
           </div>
-        </div>
 
-        {/* RAIL: full-loadout meta top 10 (vacuum, icons only) — hidden if the endpoint is unavailable */}
-        {railOk && (
-          <TopPicksRail picks={topPicks} byId={byId} used={used}
-            onPick={place} disabled={step.kind === "done"} />
-        )}
+          {railOk && <TopMetaStrip picks={topPicks} byId={byId} used={used} onPick={place} disabled={step.kind === "done"} />}
+        </div>
       </div>
+
       {recs?.game_plan && our.some((x) => x != null) && <GamePlanPanel gp={recs.game_plan} blind={blindPick} />}
-      {/* Single ad slot, deliberately below the entire draft flow — mid-draft ad formats are the
-          ones the retention evidence says drive abandonment, and accidental clicks near the
-          picker violate AdSense placement policy. Renders nothing until the env vars are set. */}
       <AdSlot name="footer" />
     </div>
   );
 }
 
-function SkeletonCard() {
+// ---- THE CALL: the large, unmistakable #1 recommendation ----
+function TheCall({ kind, r, b, accent, onPlace }: {
+  kind: "pick" | "ban"; r: PickRec | BanRec; b?: Brawler; accent: string; onPlace: () => void;
+}) {
+  const isBan = kind === "ban";
+  const pr = r as PickRec, br = r as BanRec;
+  // Shown instantly (no count-up): under a 20s clock the headline number must read true on the
+  // first glance — an animated ramp from 0 briefly shows a misleadingly low value.
+  const score = isBan ? br.threat : (pr.projected_winprob ?? pr.score);
+  const scoreLabel = isBan ? "THREAT" : (pr.projected_winprob != null ? "PROJ WIN" : "SCORE");
+  const col = isBan ? "var(--red)" : scoreColor(score);
+  const reason = isBan ? banReason(br) : pickReason(pr);
+  const cls = b?.cls || pr.cls;
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-2.5">
-      <div className="flex items-center gap-2.5">
-        <div className="w-10 h-10 rounded-lg skeleton" />
-        <div className="flex-1 space-y-2">
-          <div className="h-3 w-24 rounded skeleton" />
-          <div className="h-2 w-14 rounded skeleton" />
+    <button onClick={onPlace} className="card-rec block w-full text-left anim-snap" style={cssVars({ "--glow": accent })}>
+      <div className="flex items-center justify-between px-3 pt-2.5 pb-2">
+        <span className="mono text-[10px] tracking-[0.15em]" style={{ color: accent }}>▸ THE CALL</span>
+        <span className="mono text-[10px] font-bold px-2 py-1" style={{ background: accent, color: "#0a0a0c" }}>{isBan ? "BAN" : "PICK"} ⏎</span>
+      </div>
+      <div className="px-3 pb-2 flex gap-3">
+        <div className="relative shrink-0">
+          <Avatar b={b} size={72} ring={accent} />
+          <span className="mono absolute -top-1.5 -left-1.5 text-[9px] font-bold px-1 leading-tight" style={{ background: accent, color: "#0a0a0c" }}>01</span>
         </div>
-        <div className="h-5 w-10 rounded skeleton" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="display text-[19px] truncate">{r.name}</div>
+              <div className="mono text-[10px] tracking-[0.1em]" style={{ color: CLASS_COLOR[cls] || "#aaa" }}>{(CLASS_SHORT[cls] || cls).toUpperCase()}</div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="mono font-bold text-[30px] leading-none tabular-nums" style={{ color: col }}>{pct(score)}</div>
+              <div className="mono text-[9px] tracking-[0.12em] text-[var(--dim)] mt-1">{scoreLabel}</div>
+            </div>
+          </div>
+          <div className="mono text-[11px] text-[var(--muted)] mt-2 leading-snug">▸ {reason}</div>
+        </div>
+      </div>
+      <div className="px-3 pb-3 space-y-1.5">
+        {isBan ? (
+          <>
+            <Meter k="WINRATE" v={br.map_winrate} />
+            <div className="flex items-center gap-2">
+              <span className="mono w-9 shrink-0 text-[9px] tracking-[0.12em] text-[var(--dim)]">USE</span>
+              <div className="meter flex-1"><i style={{ width: pct(Math.min(1, br.use_rate * 2)), background: "var(--gold)" }} /></div>
+              <span className="mono w-6 text-right text-[10px] tabular-nums text-[var(--muted)]">{two(br.use_rate)}</span>
+            </div>
+          </>
+        ) : (
+          pickSignals(pr).slice(0, 5).map((s) => <Meter key={s.k} k={s.k} v={s.v} />)
+        )}
+        <div className="flex items-center justify-between pt-1.5 border-t border-[var(--line)]">
+          <span className="label">CONFIDENCE {pct((r as PickRec).confidence ?? (r as BanRec).confidence)}</span>
+          {!isBan && pr.personal_games != null && (
+            <span className="mono text-[10px] px-1.5 py-0.5" style={{ background: "#3b82f622", color: "#7fb4ff" }}
+              title="your recent ranked games with this brawler">YOU · {Math.round(pr.personal_games)}G</span>
+          )}
+        </div>
+        {!isBan && pr.gaps && pr.gaps.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-1.5">
+            {pr.gaps.map((g) => (
+              <span key={g} className="mono text-[9px] px-1.5 py-0.5 border uppercase tracking-[0.06em]"
+                style={{ borderColor: "#e8843a66", color: "#e8a24a" }} title="missing from your loadout">{g}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function RankedPick({ r, i, b, onClick }: { r: PickRec; i: number; b?: Brawler; onClick: () => void }) {
+  const lookahead = r.projected_winprob != null;
+  const score = lookahead ? (r.projected_winprob as number) : r.score;
+  const sig = pickSignals(r).sort((a, b2) => Math.abs(b2.v - 0.5) - Math.abs(a.v - 0.5)).slice(0, 3);
+  return (
+    <button onClick={onClick} className="card-rec flex items-center gap-2.5 w-full text-left px-3 py-2 border-t border-[var(--line)]"
+      style={cssVars({ "--glow": "var(--blue)" })}>
+      <span className="mono text-[11px] text-[var(--dim)] w-4 text-right tabular-nums">{i}</span>
+      <Avatar b={b} size={34} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="font-semibold text-[13px] truncate">{r.name}</span>
+          <span className="mono text-[9px] tracking-[0.08em] shrink-0" style={{ color: CLASS_COLOR[r.cls] || "#aaa" }}>{CLASS_SHORT[r.cls] || r.cls}</span>
+          {lookahead && <span className="mono text-[8px] text-[var(--dim)] shrink-0">⟲</span>}
+        </div>
+        <SigLine sig={sig} />
+      </div>
+      <span className="mono font-bold text-[16px] tabular-nums shrink-0" style={{ color: scoreColor(score) }}>{pct(score)}</span>
+    </button>
+  );
+}
+
+function RankedBan({ r, i, b, onClick }: { r: BanRec; i: number; b?: Brawler; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="card-rec flex items-center gap-2.5 w-full text-left px-3 py-2 border-t border-[var(--line)]"
+      style={cssVars({ "--glow": "var(--red)" })}>
+      <span className="mono text-[11px] text-[var(--dim)] w-4 text-right tabular-nums">{i}</span>
+      <Avatar b={b} size={34} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="font-semibold text-[13px] truncate">{r.name}</span>
+          <span className="mono text-[9px] tracking-[0.08em] shrink-0" style={{ color: CLASS_COLOR[r.cls] || "#aaa" }}>{CLASS_SHORT[r.cls] || r.cls}</span>
+        </div>
+        <span className="mono text-[10px] tabular-nums text-[var(--dim)]">
+          MAP <span style={{ color: r.map_winrate >= 0.5 ? "var(--green)" : "var(--muted)" }}>{two(r.map_winrate)}</span>
+          <span className="text-[var(--line-strong)]"> · </span>
+          USE <span style={{ color: "var(--gold)" }}>{two(r.use_rate)}</span>
+        </span>
+      </div>
+      <span className="mono font-bold text-[16px] tabular-nums shrink-0" style={{ color: "var(--red)" }}>{pct(r.threat)}</span>
+    </button>
+  );
+}
+
+function CallSkeleton() {
+  return (
+    <div className="p-3">
+      <div className="flex gap-3">
+        <div className="w-[72px] h-[72px] skeleton" />
+        <div className="flex-1 space-y-2 pt-1">
+          <div className="h-4 w-28 skeleton" />
+          <div className="h-2.5 w-16 skeleton" />
+          <div className="h-2 w-40 skeleton mt-3" />
+        </div>
       </div>
       <div className="mt-3 space-y-1.5">
-        <div className="h-1.5 w-full rounded skeleton" />
-        <div className="h-1.5 w-3/4 rounded skeleton" />
+        {[0, 1, 2, 3].map((i) => <div key={i} className="h-1.5 w-full skeleton" />)}
       </div>
     </div>
   );
 }
-
-function ScoreBadge({ value, label }: { value: number; label: string }) {
-  const shown = useCountUp(value);
-  const color = value >= 0.5 ? "#3ec46d" : "#e8c34a";
+function RowSkeleton() {
   return (
-    <div className="text-right">
-      <div className="text-lg font-bold tabular-nums" style={{ color, textShadow: `0 0 18px ${color}55` }}>{pct(shown)}</div>
-      <div className="text-[10px] text-[var(--muted)] -mt-1">{label}</div>
+    <div className="flex items-center gap-2.5 px-3 py-2 border-t border-[var(--line)]">
+      <div className="w-[34px] h-[34px] skeleton" />
+      <div className="flex-1 space-y-1.5"><div className="h-2.5 w-20 skeleton" /><div className="h-2 w-28 skeleton" /></div>
+      <div className="h-4 w-9 skeleton" />
     </div>
   );
 }
 
-function PickCard({ r, i, b, onClick }: { r: PickRec; i: number; b?: Brawler; onClick: () => void }) {
-  const lookahead = r.projected_winprob != null;
-  return (
-    <button onClick={onClick}
-      className="w-full text-left rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-2.5 hover:border-[#3b82f6] card-rec anim-fade-up"
-      style={cssVars({ "--glow": "rgba(59,130,246,0.45)", animationDelay: `${i * 45}ms` })}>
-      <div className="flex items-center gap-2.5">
-        <span className="text-[var(--muted)] text-sm w-4">{i + 1}</span>
-        <Avatar b={b} size={40} />
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm truncate">{r.name}</div>
-          <div className="text-[11px]" style={{ color: CLASS_COLOR[r.cls] || "#aaa" }}>{r.cls}</div>
-        </div>
-        <ScoreBadge value={lookahead ? (r.projected_winprob as number) : r.score} label={lookahead ? "🔮 lookahead" : "score"} />
-      </div>
-      <div className="mt-2 space-y-1">
-        <Bar label="map" value={r.map_winrate} />
-        {r.synergy != null && <Bar label="synergy" value={r.synergy} />}
-        {r.counter != null && <Bar label="counter" value={r.counter} />}
-        <Bar label="role" value={r.role_fit} />
-        {r.win_prob != null && <Bar label="model" value={r.win_prob} />}
-        {r.mastery != null && <Bar label="mastery" value={r.mastery} />}
-        {r.personal_winrate != null && <Bar label="you" value={r.personal_winrate} />}
-      </div>
-      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[10px] text-[var(--muted)]">
-        <span>confidence {pct(r.confidence)}</span>
-        {r.personal_games != null && (
-          <span className="px-1.5 py-0.5 rounded" style={{ background: "#5aa0ff22", color: "#7fb4ff" }}
-            title="your recent ranked games with this brawler (recency-weighted)">
-            you · {Math.round(r.personal_games)}g
-          </span>
-        )}
-        {(r.gaps || []).map((g) => (
-          <span key={g} className="px-1.5 py-0.5 rounded" style={{ background: "#e8843a22", color: "#e8a24a" }}>{g}</span>
-        ))}
-      </div>
-    </button>
-  );
-}
-
-function BanCard({ r, i, b, onClick }: { r: BanRec; i: number; b?: Brawler; onClick: () => void }) {
-  return (
-    <button onClick={onClick}
-      className="w-full text-left rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-2.5 hover:border-[#e0566f] card-rec anim-fade-up"
-      style={cssVars({ "--glow": "rgba(224,86,111,0.45)", animationDelay: `${i * 45}ms` })}>
-      <div className="flex items-center gap-2.5">
-        <span className="text-[var(--muted)] text-sm w-4">{i + 1}</span>
-        <Avatar b={b} size={40} />
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm truncate">{r.name}</div>
-          <div className="text-[11px]" style={{ color: CLASS_COLOR[r.cls] || "#aaa" }}>{r.cls}</div>
-        </div>
-        <ScoreBadge value={r.threat} label="threat" />
-      </div>
-      <div className="mt-2 space-y-1">
-        <Bar label="win rate" value={r.map_winrate} />
-        <div className="flex items-center gap-2 text-[11px]">
-          <span className="w-14 text-right text-[var(--muted)]">use rate</span>
-          <div className="flex-1 h-1.5 rounded bg-[#0c1119] overflow-hidden">
-            <div className="h-full rounded bar-fill bg-[#e8843a]" style={{ width: pct(Math.min(1, r.use_rate * 2)) }} />
-          </div>
-          <span className="w-9 tabular-nums text-[var(--muted)]">{pct(r.use_rate)}</span>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-// Skinny, icons-only rail of the map's strongest brawlers in a vacuum — judged at a full
-// loadout (all gadgets, gears & star powers) with no roster filter. Stable across the draft;
-// a constant "who's generally strong here" reference beside the live, personalized picks.
-function TopPicksRail({ picks, byId, used, onPick, disabled }: {
+// Skinny horizontal strip of the map's strongest brawlers at a full loadout — the pure meta,
+// stable across the draft. Icons only; a constant "who's generally strong here" reference.
+function TopMetaStrip({ picks, byId, used, onPick, disabled }: {
   picks: TopPick[]; byId: Map<number, Brawler>; used: Set<number>;
   onPick: (id: number) => void; disabled: boolean;
 }) {
   const blurb =
-    "The strongest picks right now if you owned every brawler at a full loadout — all " +
-    "gadgets, gears & star powers. Updates as the draft fills in (used brawlers drop out, " +
-    "synergy & counters fold in), but ignores your roster — the pure meta, not your " +
-    "personalized list.";
+    "The strongest picks right now if you owned every brawler at a full loadout (all gadgets, " +
+    "gears & star powers). Updates as the draft fills in, but ignores your roster, the pure meta.";
   return (
-    <div className="rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-2 h-fit lg:sticky lg:top-4 anim-fade-up"
-      style={{ animationDelay: "300ms" }}>
-      <div className="text-center mb-2 px-0.5 cursor-help" title={blurb}>
-        <div className="text-base leading-none floaty">👑</div>
-        <div className="text-[9px] uppercase tracking-wide text-[var(--muted)] leading-tight mt-0.5">
-          Top 10<br />full loadout
-        </div>
+    <div className="panel">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--line)] cursor-help" title={blurb}>
+        <span className="label" style={{ color: "var(--gold)" }}>◆ TOP META</span>
+        <span className="label">FULL LOADOUT</span>
       </div>
-      <div className="flex flex-row flex-wrap justify-center gap-1.5 lg:flex-col lg:items-center">
+      <div className="p-2 flex flex-wrap gap-1.5">
         {picks.length === 0
-          ? [0, 1, 2, 3, 4].map((i) => <div key={i} className="w-12 h-12 rounded-lg skeleton" />)
+          ? [0, 1, 2, 3, 4, 5, 6, 7].map((i) => <div key={i} className="w-11 h-11 skeleton" />)
           : picks.map((p, i) => {
               const b = byId.get(p.brawler_id);
               const isUsed = used.has(p.brawler_id);
               return (
-                <button key={p.brawler_id} onClick={() => onPick(p.brawler_id)}
-                  disabled={isUsed || disabled}
-                  className="group anim-pop disabled:cursor-not-allowed"
-                  style={cssVars({ animationDelay: `${i * 40}ms` })}
-                  title={`#${i + 1}  ${p.name}\n${pct(p.score)} pick score · ${pct(p.map_winrate)} map win rate\nassumes a full loadout (all gadgets, gears & star powers)`}>
-                  <span className="tile-img" style={cssVars({ "--c": CLASS_COLOR[p.cls] || "#26303f" })}>
-                    <Avatar b={b} size={48} dim={isUsed} />
+                <button key={p.brawler_id} onClick={() => onPick(p.brawler_id)} disabled={isUsed || disabled}
+                  className="group relative disabled:cursor-not-allowed anim-snap"
+                  title={`#${i + 1}  ${p.name}\n${pct(p.score)} pick score · ${pct(p.map_winrate)} map win rate\nassumes a full loadout`}>
+                  <span className="tile block p-[2px]" style={cssVars({ "--tc": CLASS_COLOR[p.cls] || "#26303f" })}>
+                    <Avatar b={b} size={40} dim={isUsed} />
                   </span>
+                  <span className="mono absolute -top-1 -left-1 text-[8px] px-0.5 leading-tight"
+                    style={{ background: i === 0 ? "var(--gold)" : "var(--panel3)", color: i === 0 ? "#0a0a0c" : "var(--muted)", border: "1px solid var(--line)" }}>{i + 1}</span>
                 </button>
               );
             })}
@@ -914,53 +1026,53 @@ function GamePlanPanel({ gp, blind }: { gp: GamePlan; blind?: boolean }) {
   const Section = ({ label, color, mark, items }: { label: string; color: string; mark: string; items: string[] }) =>
     items.length === 0 ? null : (
       <div>
-        <div className="text-xs uppercase tracking-wide mb-1.5" style={{ color }}>{label}</div>
-        <ul className="space-y-1">
-          {items.map((t, i) => <li key={i} className="text-xs text-[var(--muted)]">{mark} {t}</li>)}
+        <div className="label mb-2" style={{ color }}>{label}</div>
+        <ul className="space-y-1.5">
+          {items.map((t, i) => <li key={i} className="mono text-[11px] text-[var(--muted)] leading-snug flex gap-1.5"><span style={{ color }}>{mark}</span>{t}</li>)}
         </ul>
       </div>
     );
   return (
-    <div className="mt-5 rounded-xl glass backdrop-blur-xl backdrop-saturate-150 p-5 anim-fade-up">
-      <div className="flex items-center gap-2 mb-3">
-        <h2 className="font-semibold">📋 Game plan</h2>
-        <span className="text-[11px] px-2 py-0.5 rounded-full bg-[var(--panel2)] text-[var(--muted)]">{gp.archetype}</span>
+    <div className="panel mt-3 p-4 anim-fade">
+      <div className="flex items-center gap-2 mb-3 pb-3 border-b border-[var(--line)]">
+        <span className="label" style={{ color: "var(--accent)" }}>▣ Game plan</span>
+        <span className="mono text-[10px] px-2 py-0.5 border border-[var(--line)] text-[var(--muted)] uppercase tracking-wide">{gp.archetype}</span>
       </div>
-      <div className="rounded-lg p-3 mb-4" style={{ background: "#3b82f615", border: "1px solid #3b82f640" }}>
-        <div className="text-[11px] uppercase tracking-wide mb-0.5" style={{ color: "#5aa0ff" }}>Win condition</div>
-        <div className="text-sm">{gp.win_condition}</div>
-        {gp.objective && <div className="text-xs text-[var(--muted)] mt-1">Objective: {gp.objective}</div>}
+      <div className="p-3 mb-4" style={{ background: "#3b82f610", border: "1px solid #3b82f640" }}>
+        <div className="label mb-1" style={{ color: "var(--blue)" }}>◎ Win condition</div>
+        <div className="text-[13px]">{gp.win_condition}</div>
+        {gp.objective && <div className="mono text-[10px] text-[var(--muted)] mt-1.5 uppercase tracking-wide">OBJECTIVE · {gp.objective}</div>}
       </div>
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid md:grid-cols-2 gap-x-6 gap-y-4">
         <div>
-          <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Your roles</div>
+          <div className="label mb-2">Your roles</div>
           <div className="space-y-1.5">
             {gp.roles.map((r) => (
-              <div key={r.name} className="text-xs">
+              <div key={r.name} className="text-[12px]">
                 <span className="font-semibold" style={{ color: CLASS_COLOR[r.cls] || "#aaa" }}>{r.name}</span>
-                <span className="text-[var(--muted)]"> — {r.role}</span>
+                <span className="mono text-[11px] text-[var(--muted)]"> / {r.role}</span>
               </div>
             ))}
           </div>
-          <div className="text-xs text-[var(--muted)] mt-2 italic">{gp.playstyle}</div>
+          <div className="mono text-[11px] text-[var(--muted)] mt-2 italic">{gp.playstyle}</div>
         </div>
         <div>
-          <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-1.5">Vs their threats</div>
+          <div className="label mb-2" style={{ color: "var(--red)" }}>Vs their threats</div>
           <div className="space-y-1.5">
-            {gp.threats.length === 0 && <div className="text-xs text-[var(--muted)]">{blind ? "Enemy draft is hidden in blind pick — focus on your own comp." : "No enemy picks on the board yet."}</div>}
+            {gp.threats.length === 0 && <div className="mono text-[11px] text-[var(--muted)]">{blind ? "ENEMY HIDDEN IN BLIND PICK — FOCUS YOUR OWN COMP." : "NO ENEMY PICKS ON THE BOARD YET."}</div>}
             {gp.threats.map((t) => (
-              <div key={t.name} className="text-xs">
+              <div key={t.name} className="text-[12px]">
                 <span className="font-semibold" style={{ color: CLASS_COLOR[t.cls] || "#aaa" }}>{t.name}</span>
-                <span className="text-[var(--muted)]"> — {t.tip}</span>
+                <span className="mono text-[11px] text-[var(--muted)]"> / {t.tip}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
-      <div className="grid md:grid-cols-3 gap-4 mt-4 pt-3 border-t border-[var(--border)]">
-        <Section label="Do" color="#3ec46d" mark="✓" items={gp.tips} />
-        <Section label="Avoid" color="#e0566f" mark="✕" items={gp.avoid} />
-        <Section label="Compensate" color="#e8c34a" mark="⚠" items={gp.compensate} />
+      <div className="grid md:grid-cols-3 gap-x-6 gap-y-4 mt-4 pt-3 border-t border-[var(--line)]">
+        <Section label="Do" color="var(--green)" mark="✓" items={gp.tips} />
+        <Section label="Avoid" color="var(--red)" mark="✕" items={gp.avoid} />
+        <Section label="Compensate" color="var(--gold)" mark="⚠" items={gp.compensate} />
       </div>
     </div>
   );

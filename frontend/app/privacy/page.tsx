@@ -10,19 +10,22 @@ export const metadata: Metadata = {
 // board actually does — an inaccurate privacy policy is worse than none.
 export default function Privacy() {
   return (
-    <div className="min-h-screen p-4 md:p-6 max-w-2xl mx-auto">
-      <header className="mb-6">
-        <nav className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm mb-5">
-          <a href="/" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">Draft board</a>
-          <a href="/guide" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">Draft guide</a>
-          <a href="/how-it-works" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">How it works</a>
-          <a href="/faq" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">FAQ</a>
-          <span className="text-[var(--text)] font-semibold" aria-current="page">Privacy</span>
-        </nav>
-        <h1 className="text-2xl font-bold tracking-tight mt-3">
-          <span className="brand-gradient">Privacy</span>
-        </h1>
-        <p className="text-xs text-[var(--muted)] mt-1">Effective August 7, 2026</p>
+    <div className="min-h-screen p-3 md:p-5 max-w-2xl mx-auto">
+      <nav className="panel flex flex-wrap items-center gap-x-1 gap-y-1 px-3 py-2 mb-8">
+        <span className="brand-gradient text-[14px] mr-2">BRAWL DRAFT</span>
+        <div className="flex flex-wrap gap-x-1 ml-auto mono text-[11px] uppercase tracking-[0.06em]">
+          <a href="/" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">Draft board</a>
+          <a href="/guide" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">Draft guide</a>
+          <a href="/how-it-works" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">How it works</a>
+          <a href="/faq" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">FAQ</a>
+          <span className="px-2.5 py-1.5 border text-[var(--text)]" style={{ borderColor: "var(--accent)" }} aria-current="page">Privacy</span>
+        </div>
+      </nav>
+      <header className="mb-7">
+        <div className="label mb-3" style={{ color: "var(--accent)" }}>▸ PRIVACY</div>
+        <h1 className="display text-[clamp(1.6rem,4vw,2.4rem)]">Privacy</h1>
+        <p className="mono text-[10px] text-[var(--dim)] mt-2 uppercase tracking-[0.1em]">Effective August 7, 2026</p>
+        <div className="h-px w-full bg-[var(--line)] mt-5" />
       </header>
 
       <div className="space-y-5 text-sm leading-relaxed text-[var(--text)]">

@@ -1,237 +1,288 @@
 @import "tailwindcss";
 
+/* ===========================================================
+   TACTICAL TELEMETRY — dark terminal design system
+   Near-black substrate · phosphor text · hazard-red accent ·
+   monospace data · 90° corners · hairline grid.
+   Palette is disciplined: blue/red are FUNCTIONAL team encodings
+   (your team / enemy), not decoration; gold = rank/meta; green =
+   winning/online. One accent otherwise: hazard red.
+   =========================================================== */
+
+@theme {
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: var(--font-jbmono), ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
 :root {
-  --bg: #080b11;
-  --panel: #141a24;
-  --panel2: #1b2330;
-  --border: #26303f;
-  --border-soft: #33415a;
-  --text: #e6edf3;
-  --muted: #8b97a7;
-  --accent: #3b82f6;
+  /* substrate (deactivated CRT — never pure #000) */
+  --bg: #0a0a0c;
+  --panel: #101216;
+  --panel2: #14171d;
+  --panel3: #1a1e26;
 
-  --blue: #3b82f6;
-  --red: #e0566f;
-  --green: #3ec46d;
-  --gold: #e8c34a;
-  --violet: #8b5cf6;
+  /* structural lines */
+  --line: #23272f;
+  --line-strong: #333a46;
 
-  --glass-border: rgba(130, 150, 185, 0.16);
-  --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 16px 40px -24px rgba(0, 0, 0, 0.85);
-  --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 26px 60px -28px rgba(0, 0, 0, 0.9);
+  /* legacy aliases kept so the written pages keep rendering */
+  --border: #23272f;
+  --border-soft: #333a46;
+
+  /* text */
+  --text: #e8eaed;   /* phosphor white */
+  --muted: #828b98;
+  --dim: #565d68;
+
+  /* accent + functional encodings */
+  --accent: #ff3b30; /* hazard red — the one true accent */
+  --red: #ff3b30;    /* enemy / ban / threat / alert */
+  --blue: #3b82f6;   /* your team / your pick */
+  --gold: #e8c34a;   /* rank / meta / top-meta */
+  --green: #35c46d;  /* winning (>50%) / system online */
+  --violet: #8b5cf6; /* blind-pick mode marker only */
+
+  --you: var(--blue);
+  --enemy: var(--red);
 }
 
 html, body {
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: var(--font-sans);
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-/* ---- ambient animated backdrop (sits behind all content) ---- */
+/* ---- ambient substrate: faint blueprint grid + CRT scanlines ---- */
 body::before {
   content: "";
   position: fixed;
-  inset: -20%;
+  inset: 0;
   z-index: -2;
   pointer-events: none;
-  background:
-    radial-gradient(42% 38% at 16% 6%, rgba(59, 130, 246, 0.22), transparent 60%),
-    radial-gradient(40% 36% at 86% 14%, rgba(224, 86, 111, 0.18), transparent 60%),
-    radial-gradient(46% 42% at 70% 92%, rgba(139, 92, 246, 0.16), transparent 62%),
-    radial-gradient(40% 40% at 26% 88%, rgba(62, 196, 109, 0.10), transparent 60%);
-  animation: aurora 26s ease-in-out infinite alternate;
-  will-change: transform, opacity;
+  background-image:
+    linear-gradient(to right, rgba(120, 140, 170, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(120, 140, 170, 0.035) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px;
 }
 
-/* subtle vignette + texture for depth */
+/* scanlines + top vignette — texture without motion */
 body::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background: radial-gradient(130% 120% at 50% -10%, transparent 52%, rgba(0, 0, 0, 0.55) 100%);
+  background:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, 0.16) 3px, rgba(0, 0, 0, 0) 4px),
+    radial-gradient(120% 80% at 50% -10%, rgba(255, 59, 48, 0.05), transparent 45%),
+    radial-gradient(130% 120% at 50% 120%, rgba(0, 0, 0, 0.5), transparent 55%);
+  opacity: 0.55;
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(var(--border-soft), var(--border));
-  border-radius: 8px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-soft);
-}
+/* squared-off scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* ===========================================================
-   Keyframes
+   Keyframes — motivated motion only (state / hierarchy / feedback)
    =========================================================== */
-@keyframes aurora {
-  0%   { transform: translate3d(0, 0, 0) scale(1);      opacity: 0.85; }
-  50%  { transform: translate3d(-1.5%, 1.5%, 0) scale(1.08); opacity: 1; }
-  100% { transform: translate3d(1.5%, -1%, 0) scale(1.04);  opacity: 0.9; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes riseIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes snapIn { 0% { opacity: 0; transform: scale(0.82); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes growX  { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes scan {
+  0%, 100% { box-shadow: inset 0 0 0 1.5px var(--ring), 0 0 0 0 color-mix(in srgb, var(--ring) 60%, transparent); }
+  50%      { box-shadow: inset 0 0 0 1.5px var(--ring), 0 0 14px 1px color-mix(in srgb, var(--ring) 45%, transparent); }
 }
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: none; }
-}
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-@keyframes popIn {
-  0%   { opacity: 0; transform: scale(0.5) translateY(4px); }
-  60%  { opacity: 1; transform: scale(1.08); }
-  100% { transform: scale(1); }
-}
-@keyframes growX {
-  from { transform: scaleX(0); }
-  to   { transform: scaleX(1); }
-}
-@keyframes pulseRing {
-  0%, 100% { box-shadow: 0 0 0 2px var(--ring), 0 0 12px -2px color-mix(in srgb, var(--ring) 75%, transparent); }
-  50%      { box-shadow: 0 0 0 2px var(--ring), 0 0 26px 3px color-mix(in srgb, var(--ring) 60%, transparent); }
-}
+@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 @keyframes shimmer {
-  0%   { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
-@keyframes sheen {
-  to { background-position: 200% center; }
+
+.anim-fade    { animation: fadeIn 0.35s ease both; }
+.anim-rise    { animation: riseIn 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.anim-snap    { animation: snapIn 0.22s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+
+/* ===========================================================
+   Surfaces
+   =========================================================== */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
 }
-@keyframes sweep {
-  0%        { transform: translateX(-130%) skewX(-12deg); }
-  55%, 100% { transform: translateX(230%)  skewX(-12deg); }
+.panel2 {
+  background: var(--panel2);
+  border: 1px solid var(--line);
 }
-@keyframes floaty {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-3px); }
+/* legacy alias — old markup that still asks for .glass gets a flat panel */
+.glass { background: var(--panel); border: 1px solid var(--line); }
+
+/* razor-thin dividers via the grid-gap trick */
+.gridlines { display: grid; gap: 1px; background: var(--line); }
+.gridlines > * { background: var(--panel); }
+
+/* ===========================================================
+   Typography helpers
+   =========================================================== */
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* structural macro headers — heavy grotesque, tight, uppercase */
+.display {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 0.92;
+  text-transform: uppercase;
+}
+
+/* mono field label / telemetry tag */
+.label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* the brand wordmark — solid phosphor, no gradient (gradient text is an AI tell) */
+.brand-gradient {
+  color: var(--text);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* terminal cursor */
+.caret::after {
+  content: "";
+  display: inline-block;
+  width: 0.5ch;
+  height: 1em;
+  margin-left: 1px;
+  background: var(--accent);
+  vertical-align: -0.12em;
+  animation: blink 1.1s step-end infinite;
 }
 
 /* ===========================================================
-   Utilities
+   Controls — sharp, monospace, industrial
    =========================================================== */
-/* note: blur is applied via Tailwind's `backdrop-blur-*` utility on each panel,
-   which survives the build's CSS minifier where a raw backdrop-filter here did not. */
-.glass {
-  background: linear-gradient(165deg, rgba(28, 37, 53, 0.74), rgba(15, 20, 30, 0.8));
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--shadow-soft);
-}
-
-.anim-fade-up  { animation: fadeUp 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-.anim-fade-in  { animation: fadeIn 0.5s ease both; }
-.anim-pop      { animation: popIn 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.35) both; }
-
-/* control buttons / inputs */
 .ctl {
-  transition: transform 0.15s ease, border-color 0.2s ease, background-color 0.2s ease,
-              color 0.2s ease, box-shadow 0.25s ease;
+  font-family: var(--font-mono);
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
-.ctl:hover {
-  transform: translateY(-1px);
-  border-color: var(--border-soft);
+.ctl:hover { border-color: var(--line-strong); }
+.ctl:active { transform: translateY(1px); }
+
+/* segmented / toggle button */
+.seg {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
-.ctl:active {
-  transform: translateY(0);
+.seg:hover { border-color: var(--line-strong); color: var(--text); }
+.seg[data-on="true"] {
+  color: var(--text);
+  border-color: var(--seg-c, var(--accent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--seg-c, var(--accent)) 45%, transparent);
 }
 
-/* recommendation cards */
+/* native select, squared */
+select.ctl {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+/* recommendation rows / cards */
 .card-rec {
-  transition: transform 0.18s ease, box-shadow 0.25s ease, border-color 0.2s ease;
-  will-change: transform;
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.12s ease;
 }
 .card-rec:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 16px 38px -18px var(--glow, rgba(0, 0, 0, 0.8));
+  border-color: var(--glow, var(--line-strong));
+  background: var(--panel3);
 }
+.card-rec:active { transform: translateY(1px); }
 
-/* animated stat bars */
-.bar-fill {
+/* meters — thin, squared telemetry bars */
+.meter {
+  height: 4px;
+  background: var(--panel3);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.meter > i {
+  display: block;
+  height: 100%;
   transform-origin: left center;
-  animation: growX 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  transition: width 0.5s ease, background-color 0.3s ease;
-  will-change: transform;
+  animation: growX 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-/* current draft slot — breathing glow */
-.slot-current {
-  border-radius: 0.5rem;
-  animation: pulseRing 1.7s ease-in-out infinite;
+/* draft slot */
+.slot {
+  position: relative;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.slot:hover { border-color: var(--line-strong); }
+
+/* the active slot — pulsing hazard scan ring, squared */
+.slot-active { animation: scan 1.6s ease-in-out infinite; }
+
+/* picker tile */
+.tile {
+  position: relative;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.1s ease;
+}
+.group:hover > .tile { border-color: var(--tc, var(--line-strong)); transform: translateY(-1px); }
+.group:active > .tile { transform: translateY(0); }
+
+/* keyboard hint chip */
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 5px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel3);
+  color: var(--muted);
 }
 
 /* skeleton loader */
 .skeleton {
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.03) 25%,
-    rgba(255, 255, 255, 0.09) 37%,
-    rgba(255, 255, 255, 0.03) 63%
-  );
+  background: linear-gradient(90deg, var(--panel2) 25%, var(--panel3) 37%, var(--panel2) 63%);
   background-size: 300% 100%;
   animation: shimmer 1.4s ease infinite;
 }
 
-/* animated gradient brand text */
-.brand-gradient {
-  background: linear-gradient(100deg, #ffffff 18%, #9ec5ff 38%, #ff9bb0 58%, #ffffff 82%);
-  background-size: 220% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: sheen 7s linear infinite;
+/* live status dot */
+.live-dot {
+  animation: blink 1.8s ease-in-out infinite;
 }
 
-/* one-shot highlight sweep (e.g. tier badge) */
-.shine {
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
-}
-.shine::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 38%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-  transform: translateX(-130%) skewX(-12deg);
-  animation: sweep 3.8s ease-in-out infinite;
-}
-
-.floaty { animation: floaty 3.2s ease-in-out infinite; }
-
-/* picker tile hover (button carries Tailwind's `group`) */
-.tile-img {
-  display: block;
-  transition: transform 0.2s ease, filter 0.2s ease;
-}
-.group:hover > .tile-img {
-  transform: translateY(-2px) scale(1.09);
-  filter: drop-shadow(0 0 10px var(--c, transparent));
-}
-
-/* smooth out all interactive color/opacity changes */
 button, select, input, a {
-  transition: opacity 0.2s ease, border-color 0.2s ease, background-color 0.2s ease,
-              color 0.2s ease, box-shadow 0.25s ease;
+  transition: opacity 0.15s ease, border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
-
-/* first-pick button — smooth color morph + glossy sweep */
-.firstpick-btn {
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 46%, rgba(0, 0, 0, 0.16));
-  transition: background-color 0.45s ease, box-shadow 0.45s ease, transform 0.15s ease, filter 0.2s ease;
-}
-.firstpick-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
-.firstpick-btn:active { transform: scale(0.95); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
