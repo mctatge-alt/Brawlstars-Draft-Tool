@@ -26,11 +26,16 @@ MODE_CLASS_PREF: Dict[str, Dict[str, float]] = {
 }
 DEFAULT_PREF = 0.5
 
-# Fusion weights. map/counter rebalanced .40/.15 -> .32/.23 per the held-out ablation
-# (scripts/ablate_context.py + docs/model-evaluation.md): counter is the strongest
-# head-to-head signal and was under-weighted, map slightly over-weighted. Per-map/mode
-# weighting was tested and found no better than these global weights, so they stay fixed.
-DEFAULT_WEIGHTS = {"map": 0.32, "model": 0.20, "counter": 0.23, "synergy": 0.15, "role": 0.10,
+# Fusion weights. Rebalanced 2026-08-10 per the held-out ablation rerun on 995k matches
+# (scripts/ablate_components.py + scripts/sweep_blend.py + docs/model-evaluation.md): the
+# retrained net now out-discriminates the empirical blend (AUC .625 vs .608; the stacker
+# gives it ~78% of the weight, a full reversal of the 40k-match era), so model .20 -> .40,
+# funded by map .32 -> .25, synergy .15 -> .05 (its conditional coefficient is ~0 in every
+# mode — redundant with the net), counter .23 -> .20. The .40/.25/.05/.20 blend was the
+# best fixed candidate (beat the old weights in 200/200 bootstrap resamples, within .0005
+# AUC of the linear refit ceiling). Per-map/mode weighting was re-tested and is still no
+# better than these global weights, so they stay fixed.
+DEFAULT_WEIGHTS = {"map": 0.25, "model": 0.40, "counter": 0.20, "synergy": 0.05, "role": 0.10,
                    "mastery": 0.25, "personal": 0.20}
 
 

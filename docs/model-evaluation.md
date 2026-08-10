@@ -5,23 +5,25 @@ learned **model** (win-prob net), pairwise **synergy** with allies, **counter** 
 enemies, mode-based **role** fit, and player-specific **mastery**/**personal** history. The
 first four are combined with fixed global weights ([`DEFAULT_WEIGHTS`](../backend/bsdraft/engine/scoring.py)).
 
-A natural question: *should those weights depend on the map and the brawlers already picked?*
-Intuitively yes — counters ought to matter more in some modes, synergy in others. This doc
-records an ablation that **tested that intuition and largely refuted it**, plus the one change
-the data did support.
+This doc records the held-out ablation that tunes those weights. It has been run twice —
+June 2026 on ~40k matches, and **August 2026 on ~995k matches** — and the headline finding
+**reversed** between runs as the dataset grew 25×.
 
-> TL;DR — Draft is a small but real edge (AUC ~0.57–0.63 by mode; matchmaking equalizes
-> teams). The interpretable empirical signals out-rank the neural net; the net mainly adds
-> calibration. **Context-dependent (per-map/mode) weighting does not improve predictions** —
-> the optimal weighting is effectively global. The one supported tweak was a global rebalance:
-> **counter was under-weighted** (raised .15 → .23) and **map over-weighted** (lowered .40 → .32).
+> TL;DR (2026-08-10, n = 995,135) — Draft is a small but real edge (AUC ~0.59–0.65 by mode;
+> matchmaking equalizes teams). **The retrained net now out-discriminates every empirical
+> signal** (AUC .625 vs .608 for the blend) — a full reversal of the June result, where the
+> empirical side out-ranked a weaker net and earned ~69% of the stacker weight (it now earns
+> ~22%). **Context-dependent (per-map/mode) weighting still does not help.** Applied
+> rebalance: `model .20 → .40`, funded by `map .32 → .25`, `synergy .15 → .05` (its
+> conditional coefficient is ~0 in every mode), `counter .23 → .20`.
 
 ## Method (leakage-free by construction)
 
-Two scripts, run over ~40,200 labeled Ranked matches:
+Three scripts, run over the labeled Ranked matches:
 
 - [`scripts/ablate_components.py`](../backend/scripts/ablate_components.py) — net vs. empirical signals, head-to-head.
 - [`scripts/ablate_context.py`](../backend/scripts/ablate_context.py) — does the right weighting move by mode?
+- [`scripts/sweep_blend.py`](../backend/scripts/sweep_blend.py) — concrete full-blend candidates (model + trio), scored as shippable fixed weight sets.
 
 Design choices that keep the comparison honest:
 
@@ -35,90 +37,120 @@ Design choices that keep the comparison honest:
 4. Calibration / stacking logistic regressions are fit with **cross-validation on the
    out-of-sample features**, so reported probabilities never see their own label.
 5. For the per-mode test, features are **5-fold cross-fit over the full dataset** (each fold's
-   stats come from the other folds) so per-mode estimates are stable rather than 1k-sample noise.
+   stats come from the other folds) so per-mode estimates are stable.
 
-## Result 1 — the net does not subsume the empirical signals
+## Result 1 — the net now subsumes most of the empirical signal (reversed from June)
 
-Held-out validation (n = 6,031), all predictors well-calibrated (ECE ≤ 0.007):
+Held-out validation (n = 149,270), all predictors well-calibrated (ECE ≤ 0.003):
 
 | Predictor | log-loss | acc | AUC |
 |---|---|---|---|
 | always 0.5 | 0.6931 | .500 | — |
-| net only | 0.6861 | .547 | **.567** |
-| empirical blend only | 0.6831 | .556 | **.581** |
-| net + empirical | 0.6826 | .560 | **.583** |
+| net only | 0.6673 | .588 | **.625** |
+| empirical blend only | 0.6740 | .576 | **.608** |
+| net + empirical | 0.6667 | .589 | **.626** |
 
-Standalone AUC of each raw signal: map `.568`, synergy `.564`, counter `.570`, blend `.581`, net `.567`.
+Standalone AUC of each raw signal: map `.608`, synergy `.584`, counter `.590`, blend `.608`, net `.625`.
 
-- The **empirical blend out-discriminates the net** (.581 vs .567); even each individual signal
-  matches it. The net's edge is calibration (ECE .001), not ranking.
-- A stacker over both assigns **~69% of the weight to the empirical side, ~31% to the net** —
-  so leaning harder on the net would *lose* discrimination. (Refutes "trust the model more.")
+- The **net out-discriminates the empirical blend** (.625 vs .608), and stacking the blend on
+  top of it adds almost nothing (+.001 AUC). The embeddings have absorbed what the count
+  tables know, plus interactions they can't represent.
+- The stacker now assigns **~78% of the weight to the net, ~22% to the empirical side** — the
+  exact mirror of June's 31/69. The June table (n = 6,031 val: net .567, blend .581) is kept
+  below for the record; the flip tracks the net's training set growing 40k → 995k matches
+  (shipped-model AUC .576 → .627 across the same period).
 
-## Result 2 — context-dependent weighting does not help
+<details>
+<summary>June 2026 run (n = 40,208) — the superseded result</summary>
 
-Cross-fit over all 40,208 matches, per mode. `map/syn/cnt` are the standardized weights each
-empirical signal earns; the AUC columns compare three blends — **fixed** (shipped weights),
-**global-refit** (one logistic over all rows), **mode-refit** (a logistic refit within the mode):
+| Predictor | log-loss | acc | AUC |
+|---|---|---|---|
+| net only | 0.6861 | .547 | .567 |
+| empirical blend only | 0.6831 | .556 | .581 |
+| net + empirical | 0.6826 | .560 | .583 |
+
+Stacker: ~69% empirical / ~31% net. Standalone: map .568, synergy .564, counter .570.
+</details>
+
+## Result 2 — context-dependent weighting still does not help
+
+Cross-fit over all 995,135 matches, per mode. `map/syn/cnt` are the standardized weights each
+empirical signal earns; the AUC columns compare **fixed** (shipped weights), **global-refit**
+(one logistic over all rows), and **mode-refit** (a logistic refit within the mode):
 
 | Mode | n | map | syn | cnt | AUC fixed | global-refit | mode-refit |
 |---|---|---|---|---|---|---|---|
-| Gem Grab | 6046 | .15 | .07 | .15 | .578 | .583 | .582 |
-| Brawl Ball | 6284 | .13 | .08 | .16 | .580 | .586 | .584 |
-| Knockout | 9846 | .11 | .06 | .12 | .563 | .568 | .567 |
-| Hot Zone | 5989 | .18 | .14 | .12 | .593 | .596 | .595 |
-| Heist | 5558 | .23 | .14 | .22 | .628 | .634 | .634 |
-| Bounty | 6485 | .12 | .08 | .11 | .567 | .571 | .570 |
+| Gem Grab | 157,653 | +.24 | −.03 | +.19 | .600 | .602 | .602 |
+| Brawl Ball | 159,981 | +.26 | −.10 | +.23 | .595 | .599 | .600 |
+| Knockout | 168,114 | +.27 | −.02 | +.12 | .588 | .592 | .592 |
+| Hot Zone | 158,166 | +.41 | −.10 | +.23 | .631 | .636 | .636 |
+| Heist | 188,403 | +.51 | −.08 | +.16 | .641 | .648 | .647 |
+| Bounty | 162,818 | +.28 | −.03 | +.11 | .587 | .592 | .592 |
 
-- **`mode-refit` ≈ `global-refit` in every mode** (within ±0.001 AUC). Re-deriving the weights
-  per mode buys nothing over a single global set. → Context-dependent weighting isn't worth building.
-- The relative ordering (counter ≈ map > synergy) is **stable across modes**. Hot Zone is the
-  only reordering (synergy edges counter), and it yields no predictive gain.
-- What *does* vary is **how much draft matters at all**: Heist is far more draft-decided
-  (AUC .63) than Knockout (.56). That's a confidence signal, not a reweighting one.
+- **`mode-refit` ≈ `global-refit` in every mode** (within ±0.001 AUC), on 26× the June sample.
+  Context-dependent weighting remains not worth building.
+- **Synergy's conditional coefficient is negative in all six modes** (−.02 to −.10): given map
+  and counter, the pair-winrate tables add nothing — they are redundant, not informative.
+  (Standalone, synergy still ranks at .584 — the redundancy is conditional.)
+- What varies is still **how much draft matters at all**: Heist (.65) vs Bounty/Knockout
+  (~.59). That's a confidence signal, not a reweighting one.
 
 > **Why no draft-phase test?** Completed matches only contain final 3v3 comps — there are no
 > partial-draft labels — so "weight signals differently as picks come in" can't be measured
 > from outcomes. The engine already handles phase structurally: synergy/counter only activate
 > once allies/enemies exist, and the blend renormalizes over the active signals.
 
-## Result 3 — the one change worth making: rebalance globally
+## Result 3 — the applied change: shift weight from the trio to the model
 
-Held-out AUC of candidate **fixed** weightings on the empirical trio (no fitting, so no overfit):
+Held-out AUC of **fixed** full-blend candidates (model + trio in one linear mix, prob-unit
+values as `score_candidate` blends them; no fitting, so no overfit):
 
-| Trio weighting | held-out AUC |
+| Full-blend weighting (model/map/syn/cnt) | held-out AUC |
 |---|---|
-| current `map .40 / syn .15 / cnt .15` | 0.5826 |
-| naive trim-synergy `.40 / .10 / .20` | 0.5825 |
-| **chosen `map .32 / syn .15 / cnt .23`** | **0.5852** |
-| global-refit ceiling | 0.5872 |
-| *optimal trio (scaled to .70 budget)* | *map .24 / syn .14 / cnt .32* |
+| June-2026 shipped `.20 / .32 / .15 / .23` | 0.6245 |
+| pre-June `.20 / .40 / .15 / .15` | 0.6248 |
+| **chosen `model-40` `.40 / .25 / .05 / .20`** | **0.6262** |
+| `model-50` `.50 / .20 / .05 / .15` | 0.6260 |
+| `model-60` `.60 / .16 / .02 / .12` | 0.6257 |
+| `model-70` `.70 / .10 / .00 / .10` | 0.6252 |
+| net-only `.90 / 0 / 0 / 0` | 0.6247 |
+| refit ceiling (train-fit, val-scored) | 0.6267 |
 
-The optimum says **counter is the strongest head-to-head signal and is under-weighted**, map
-is over-weighted, and synergy is about right — *not* the "synergy is over-weighted" guess a
-glance might suggest (which the `trim-synergy` row shows gains nothing).
+- The curve **plateaus at model .40–.50 and falls off toward net-only** — the trio still earns
+  its keep as a complement, just not as the majority partner. Note net-only ≈ the June-2026
+  shipped weights: leaving the weights untuned wastes the whole model upgrade.
+- `model-40` beat the shipped weights in **200/200 paired bootstrap resamples** and sits within
+  .0005 AUC of the linear ceiling.
+- The unconstrained refit's raw weights (e.g. a negative counter coefficient) are collinearity
+  artifacts — the net has absorbed the counter signal — which is exactly why the decision is
+  made on fixed candidates, not the refit.
 
-**Applied change** ([`scoring.py`](../backend/bsdraft/engine/scoring.py)): `map 0.40 → 0.32`,
-`counter 0.15 → 0.23` (synergy, model, role, mastery, personal unchanged). This captures ~57%
-of the available headroom (0.5826 → 0.5852, ceiling 0.5872).
+**Applied change** ([`scoring.py`](../backend/bsdraft/engine/scoring.py)): `model 0.20 → 0.40`,
+`map 0.32 → 0.25`, `synergy 0.15 → 0.05`, `counter 0.23 → 0.20` (role, mastery, personal
+unchanged).
 
-**Why only a half-step, not the full optimum?** The ablation is *match-level* (full teams, a
-team-A−B difference), whereas `score_candidate` ranks a *single* brawler by its raw map
-win-rate — the most reliable "is this brawler good here" signal for an individual pick, even
-where it's partly redundant once both full teams are known. So map wasn't cut all the way to .24.
+**Why keep synergy at .05 instead of 0?** Match-level redundancy is not candidate-level
+uselessness: mid-draft, with two allies picked and no model-visible enemy comp, the pair
+tables are still the only "fits with what we have" signal, and the blend renormalizes over
+active signals — a small weight keeps that behavior (and its explanation in the UI) alive at
+negligible cost (.0002 AUC vs the best syn-0 candidate).
 
 ## Limitations
 
-- **Low ceiling.** Ranked matchmaking equalizes teams (base team-A win-rate 0.502), so no
-  weighting scheme pulls much past ~0.58 AUC. The honest claim is "a small, real draft edge,"
-  not "predicts winners."
+- **Low ceiling.** Ranked matchmaking equalizes teams (base team-A win-rate 0.510), so no
+  weighting scheme pulls far past ~0.63 AUC pooled. The honest claim is "a small, real draft
+  edge," not "predicts winners."
 - **Match-level ≠ candidate-level.** The reweight direction transfers; exact magnitudes don't.
 - The reweight's downstream effect on *pick rankings* can't be validated against outcomes (no
-  pick-level labels), so the change is deliberately conservative.
+  pick-level labels), so the change stays on the conservative side of the plateau.
+- **These weights chase the model's quality.** The 69/31 → 22/78 flip shows the optimal blend
+  moves with the net's training set. Re-run the suite after major dataset growth or an
+  architecture change; the sweep exists so that check is one command.
 
 ## Reproduce
 
 ```bash
 PYTHONPATH=backend .venv/bin/python backend/scripts/ablate_components.py   # -> docs/ablation.json
 PYTHONPATH=backend .venv/bin/python backend/scripts/ablate_context.py      # -> docs/ablation_context.json
+PYTHONPATH=backend .venv/bin/python backend/scripts/sweep_blend.py         # full-blend candidates
 ```
