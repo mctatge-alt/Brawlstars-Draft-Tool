@@ -27,32 +27,22 @@ from typing import Dict, List
 import httpx
 
 from bsdraft.constants import RANKED_MODES, REFERENCE_DIR
+from bsdraft.data.catalog import CATALOG_HOSTS, diff_catalogs, fetch_catalog, validate as _validate
 
-BRAWLERS_URL = "https://api.brawlify.com/v1/brawlers"
-MAPS_URL = "https://api.brawlify.com/v1/maps"
-
-
-def _fetch(url: str, timeout: float = 30.0) -> dict:
-    with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-        resp = client.get(url)
-    resp.raise_for_status()
-    return resp.json()
+# ``api.brawlify.com`` began bot-blocking automated requests (HTTP 403 "Security Check");
+# ``api.brawlapi.com`` serves the identical payload. Both are tried in order — see
+# bsdraft/data/catalog.py, which owns the fetching, validation and diffing this script reuses.
+BRAWLERS_URL = f"{CATALOG_HOSTS[0]}/v1/brawlers"
+MAPS_URL = f"{CATALOG_HOSTS[0]}/v1/maps"
 
 
-def _validate(payload: dict, label: str) -> List[dict]:
-    """Make sure the payload looks like a Brawlify catalog before trusting it to overwrite a
-    good local snapshot. Raises ValueError on anything suspicious (wrong URL, empty list,
-    malformed items) so a bad fetch never clobbers working data."""
-    if not isinstance(payload, dict) or not isinstance(payload.get("list"), list):
-        raise ValueError(f"{label}: response has no 'list' array — wrong URL or the API changed?")
-    items = payload["list"]
-    if not items:
-        raise ValueError(f"{label}: 'list' is empty — refusing to overwrite local data")
-    bad = [x for x in items
-           if not isinstance(x, dict) or not isinstance(x.get("id"), int) or not x.get("name")]
-    if bad:
-        raise ValueError(f"{label}: {len(bad)} item(s) missing an integer id/name — refusing to overwrite")
-    return items
+def _fetch_list(url: str, path: str) -> dict:
+    """Fetch one catalog. The default URL means "try the known hosts in order"; anything else is
+    an explicit override and is fetched verbatim."""
+    override = None if url == f"{CATALOG_HOSTS[0]}/v1/{path}" else url
+    payload, src = fetch_catalog(path, url=override)
+    print(f"  source: {src}")
+    return payload
 
 
 def _current_list(path: Path) -> List[dict]:
@@ -95,27 +85,37 @@ def refresh(brawlers_url: str = BRAWLERS_URL, maps_url: str = MAPS_URL, dry_run:
     b_path = REFERENCE_DIR / "brawlers.json"
     m_path = REFERENCE_DIR / "maps.json"
 
-    before_b = _brawler_names(_current_list(b_path))
+    before_list = _current_list(b_path)
+    before_b = _brawler_names(before_list)
     before_m = _ranked_map_names(_current_list(m_path))
 
-    b_payload = _fetch(brawlers_url)
-    m_payload = _fetch(maps_url)
-    after_b = _brawler_names(_validate(b_payload, "brawlers"))
+    b_payload = _fetch_list(brawlers_url, "brawlers")
+    m_payload = _fetch_list(maps_url, "maps")
+    after_list = _validate(b_payload, "brawlers")
+    after_b = _brawler_names(after_list)
     after_m = _ranked_map_names(_validate(m_payload, "maps"))
 
     new_brawlers = [f"{after_b[i]} (#{i})" for i in after_b if i not in before_b]
     gone_brawlers = [f"{before_b[i]} (#{i})" for i in before_b if i not in after_b]
     new_maps = sorted(after_m[i] for i in after_m if i not in before_m)
+    # Star power / gadget changes matter to mastery + loadout scoring but used to pass silently:
+    # this script only ever diffed brawler and map *names*.
+    acc_changes = diff_catalogs(before_list, after_list).accessory_changes
 
     print(f"brawlers: {len(before_b)} -> {len(after_b)}")
     if new_brawlers:
         print("  NEW: " + ", ".join(new_brawlers))
     if gone_brawlers:
         print("  removed: " + ", ".join(gone_brawlers))
+    if acc_changes:
+        print(f"star powers / gadgets: {len(acc_changes)} change(s)")
+        for c in acc_changes:
+            detail = f"{c.old_name!r} -> {c.name!r}" if c.change == "renamed" else c.name
+            print(f"  {c.change} {c.kind}: {c.brawler} — {detail}")
     print(f"ranked maps: {len(before_m)} -> {len(after_m)}")
     if new_maps:
         print("  NEW: " + ", ".join(new_maps))
-    if not (new_brawlers or gone_brawlers or new_maps):
+    if not (new_brawlers or gone_brawlers or new_maps or acc_changes):
         print("  (no changes vs local snapshots)")
 
     if dry_run:
