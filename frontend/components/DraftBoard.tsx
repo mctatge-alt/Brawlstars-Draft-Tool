@@ -635,7 +635,16 @@ export default function DraftBoard() {
   const active = useMemo<Slot | null>(() => {
     const empty = (s: Slot) => (s.zone === "ban" ? bans : s.zone === "our" ? our : their)[s.index] == null;
     if (activeOverride && empty(activeOverride)) return activeOverride;
-    return order.find(empty) ?? null;
+    // Ranked bans are 3–6, not a fixed 6. Once you've moved on — any later slot is already filled —
+    // an empty ban slot counts as skipped, so the cursor flows forward through the queue instead of
+    // snapping back to it after every pick. To fill a skipped ban later, click that slot directly.
+    const filledAfter: boolean[] = order.map(() => false);
+    let seen = false;
+    for (let i = order.length - 1; i >= 0; i--) {
+      filledAfter[i] = seen;
+      if (!empty(order[i])) seen = true;
+    }
+    return order.find((s, i) => empty(s) && !(s.zone === "ban" && filledAfter[i])) ?? null;
   }, [activeOverride, order, bans, our, their]);
   const step: Step = useMemo(() => {
     if (!active) return { kind: "done" };
