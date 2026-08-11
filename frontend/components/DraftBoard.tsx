@@ -571,6 +571,9 @@ export default function DraftBoard() {
   const rosterTag = rankInfo?.tag ?? null;
 
   useEffect(() => {
+    // No tag → no personalization. Never poll tag-less: the backend used to answer a tag-less
+    // request with the operator's own roster, leaking their identity to every visitor.
+    if (!rosterTag) { setRoster(null); return; }
     let cancelled = false;
     let last = 0;
     const pull = () => {

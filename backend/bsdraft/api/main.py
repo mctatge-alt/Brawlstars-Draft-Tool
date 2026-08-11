@@ -302,13 +302,17 @@ def loadout(brawler: int, mode: str, map_id: Optional[int] = None):
 
 @app.get("/api/roster", response_model=S.RosterResponse)
 async def roster(tag: Optional[str] = None):
-    """The configured (or given) player's roster — owned brawlers, loadout completeness, and
-    mastery — fetched live from Supercell (needs the IP-locked key, so local/home only). The
-    frontend re-polls this so a long session stays current; a successful result is cached for
-    ``roster_ttl_seconds`` so the polling doesn't hammer the live API."""
-    t = (tag or settings.player_tag or "").strip()
+    """The given player's roster — owned brawlers, loadout completeness, and mastery — fetched
+    live from Supercell (needs the IP-locked key, so local/home only). The frontend re-polls this
+    so a long session stays current; a successful result is cached for ``roster_ttl_seconds`` so
+    the polling doesn't hammer the live API.
+
+    No ``settings.player_tag`` fallback: this endpoint is public via the roster tunnel, so a
+    tag-less request must NOT resolve to the operator's own account — that leaked the operator's
+    identity and roster to every visitor who hadn't entered their own tag."""
+    t = (tag or "").strip()
     if not t:
-        return S.RosterResponse(loaded=False, tag="", name="", error="no player tag configured")
+        return S.RosterResponse(loaded=False, tag="", name="", error="no player tag")
     key = normalize_tag(t)
     hit = _roster_cache.get(key)
     if hit is not None and (time.time() - hit[0]) < settings.roster_ttl_seconds:
