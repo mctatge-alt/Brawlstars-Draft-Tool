@@ -1,0 +1,54 @@
+{
+  "_comment": "Curated gear guide. Gears are NOT in any catalog API (brawlify/brawlapi don't expose them and the official API only lists a player's OWNED gears), so this file is maintained by hand. It intentionally covers only the six universal 'Super Rare' gears: Epic and Mythic gears are being removed across 2026 (refunded as brawlers get 'Buffies'), so naming them here would go stale within weeks. On the user's own pick the live roster still shows their actually-owned gears (incl. any Epic/Mythic they still hold) by name. `base` is a 0..1 prior; `modes`/`roles` add a boost when the current mode/brawler-class matches. Effect-based editorial heuristic, not a measured tier read.",
+  "note": "Gears: the six universal 'Super Rare' gears. Epic/Mythic gears are being phased out through 2026 as Buffies roll out, so this guide sticks to the six that aren't going away.",
+  "gears": [
+    {
+      "name": "Shield",
+      "effect": "Regenerating shield",
+      "description": "Adds a ~900-HP shield that regenerates out of combat once you're at full health — extra effective HP for trades.",
+      "base": 0.60,
+      "modes": { "Knockout": 0.30, "Bounty": 0.20, "Heist": 0.10 },
+      "roles": { "Tank": 0.15, "Assassin": 0.10, "Marksman": 0.10 }
+    },
+    {
+      "name": "Health",
+      "effect": "Faster out-of-combat regen",
+      "description": "+50% out-of-combat health regeneration — recover between fights so you can hold a position longer.",
+      "base": 0.50,
+      "modes": { "Knockout": 0.20, "Gem Grab": 0.15, "Hot Zone": 0.15 },
+      "roles": { "Tank": 0.15, "Support": 0.10 }
+    },
+    {
+      "name": "Damage",
+      "effect": "More damage under 50% HP",
+      "description": "+15% damage while below 50% HP — rewards aggressive, low-health brawlers that keep fighting.",
+      "base": 0.48,
+      "modes": { "Heist": 0.25, "Bounty": 0.10 },
+      "roles": { "Assassin": 0.18, "Damage Dealer": 0.15, "Marksman": 0.10 }
+    },
+    {
+      "name": "Speed",
+      "effect": "Faster in bushes",
+      "description": "+15% movement speed while moving in a bush — better engages, rotations, and ball-carrying.",
+      "base": 0.47,
+      "modes": { "Brawl Ball": 0.28, "Gem Grab": 0.12 },
+      "roles": { "Tank": 0.15, "Assassin": 0.15 }
+    },
+    {
+      "name": "Vision",
+      "effect": "Reveals bushed enemies",
+      "description": "Reveals enemies you damage in bushes for 2s (not ability-invisibility) — strong bush control on cover-heavy maps.",
+      "base": 0.40,
+      "modes": { "Gem Grab": 0.18, "Bounty": 0.15, "Knockout": 0.12 },
+      "roles": { "Assassin": 0.12, "Marksman": 0.10 }
+    },
+    {
+      "name": "Gadget Charge",
+      "effect": "-15% gadget cooldown",
+      "description": "Cuts gadget cooldown by 15% — most value on brawlers whose gadget defines their kit.",
+      "base": 0.44,
+      "modes": {},
+      "roles": { "Support": 0.15, "Controller": 0.12, "Artillery": 0.12 }
+    }
+  ]
+}

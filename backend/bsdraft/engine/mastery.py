@@ -25,6 +25,12 @@ class Mastery:
     has_hypercharge: bool
     buffies_have: int
     buffies_total: int
+    # The *specific* owned items (ids), retained so the UI can suggest only what the player can
+    # actually equip on their own pick. Gears carry names+levels since no catalog lists them.
+    # These are also the raw ingredient for the planned single-item-owner win-rate inference.
+    owned_star_powers: Tuple[int, ...] = ()
+    owned_gadgets: Tuple[int, ...] = ()
+    owned_gears: Tuple[dict, ...] = ()  # each {"id", "name", "level"}
 
     @property
     def comfort(self) -> float:  # how much the player has played/succeeded on it
@@ -64,24 +70,42 @@ class Mastery:
         return out
 
 
+def _ids(items) -> Tuple[int, ...]:
+    return tuple(i["id"] for i in items if isinstance(i, dict) and i.get("id") is not None)
+
+
+def _gears(items) -> Tuple[dict, ...]:
+    out = []
+    for g in items or []:
+        if isinstance(g, dict) and g.get("id") is not None:
+            out.append({"id": g["id"], "name": g.get("name", ""), "level": g.get("level", 0)})
+    return tuple(out)
+
+
 def parse_roster(player: dict) -> Dict[int, Mastery]:
     roster: Dict[int, Mastery] = {}
     for b in player.get("brawlers", []):
         buf = b.get("buffies") or {}
         have = sum(1 for v in buf.values() if v) if isinstance(buf, dict) else 0
         total = len(buf) if isinstance(buf, dict) else 0
+        star_powers = b.get("starPowers") or []
+        gadgets = b.get("gadgets") or []
+        gears = b.get("gears") or []
         roster[b["id"]] = Mastery(
             brawler_id=b["id"],
             power=b.get("power", 0),
             rank=b.get("rank", 0),
             trophies=b.get("trophies", 0),
             highest_trophies=b.get("highestTrophies", 0),
-            has_starpower=bool(b.get("starPowers")),
-            has_gadget=bool(b.get("gadgets")),
-            has_gears=bool(b.get("gears")),
+            has_starpower=bool(star_powers),
+            has_gadget=bool(gadgets),
+            has_gears=bool(gears),
             has_hypercharge=bool(b.get("hyperCharges")),
             buffies_have=have,
             buffies_total=total or 3,
+            owned_star_powers=_ids(star_powers),
+            owned_gadgets=_ids(gadgets),
+            owned_gears=_gears(gears),
         )
     return roster
 

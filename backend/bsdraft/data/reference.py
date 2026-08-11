@@ -33,6 +33,8 @@ class Accessory:
     id: int
     name: str
     kind: str  # "star_power" | "gadget"
+    image_url: str = ""
+    description: str = ""  # raw catalog text (carries unfilled `x`/`<!card...>` value tokens)
 
 
 @dataclass(frozen=True)
@@ -90,11 +92,13 @@ def load_brawlers() -> tuple:
             cls=_resolve_class(x, overrides),
             rarity=(x.get("rarity") or {}).get("name", ""),
             star_powers=tuple(
-                Accessory(sp["id"], sp["name"], "star_power")
+                Accessory(sp["id"], sp["name"], "star_power",
+                          sp.get("imageUrl", ""), sp.get("description", ""))
                 for sp in (x.get("starPowers") or [])
             ),
             gadgets=tuple(
-                Accessory(g["id"], g["name"], "gadget")
+                Accessory(g["id"], g["name"], "gadget",
+                          g.get("imageUrl", ""), g.get("description", ""))
                 for g in (x.get("gadgets") or [])
             ),
             image_url=x.get("imageUrl", ""),

@@ -6,10 +6,22 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel
 
 
+class OwnedGear(BaseModel):
+    id: int
+    name: str
+    level: int = 0
+
+
 class OwnedBrawler(BaseModel):
     id: int
     mastery: float
     gaps: List[str] = []
+    # The specific items this player owns on the brawler, so the client can restrict loadout
+    # suggestions on the user's own pick to what they can actually equip. Empty on the recommend
+    # request path (the client only sends id/mastery/gaps there); populated by /api/roster.
+    owned_star_powers: List[int] = []
+    owned_gadgets: List[int] = []
+    owned_gears: List[OwnedGear] = []
 
 
 class RecommendRequest(BaseModel):
@@ -161,6 +173,35 @@ class RosterResponse(BaseModel):
     name: str
     owned: List[OwnedBrawler] = []
     error: Optional[str] = None
+
+
+class LoadoutItem(BaseModel):
+    id: Optional[int] = None       # catalog id (gadgets/star powers); None for gears (no catalog)
+    name: str
+    kind: str                      # "gadget" | "star_power" | "gear"
+    image_url: str = ""
+    effect: str = ""               # short effect label, e.g. "Mobility · reload"
+    description: str = ""          # cleaned catalog text (gadgets/SP) or guide text (gears)
+    fit: float = 0.0               # mode-fit score 0..1 (heuristic; swapped for a win-rate in Phase 2)
+    recommended: bool = False      # the best-fit item of its kind for this mode
+    why: str = ""                  # one-line reasoning tied to the mode/effect
+    source: str = "heuristic"      # "heuristic" (effect-based) | "curated" (gear guide)
+
+
+class LoadoutResponse(BaseModel):
+    """Which gadget / star power / gear to equip on a drafted brawler, given the mode.
+
+    Effect-based heuristic (same spirit as the game plan), not a live tier read — the match data
+    can't attribute wins to a specific item yet. ``source``/``fit`` are the seam for the planned
+    single-item-owner win-rate upgrade. Ownership is overlaid client-side for the user's own seat."""
+    brawler_id: int
+    brawler_name: str
+    cls: str = ""
+    mode: str = ""
+    gadgets: List[LoadoutItem] = []
+    star_powers: List[LoadoutItem] = []
+    gears: List[LoadoutItem] = []
+    note: str = ""
 
 
 class RankResponse(BaseModel):

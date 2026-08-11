@@ -29,6 +29,7 @@ from bsdraft.data import sync
 from bsdraft.engine import mastery
 from bsdraft.engine.drift import detect_drift, load_report
 from bsdraft.engine.engine import DraftEngine
+from bsdraft.engine.loadout import loadout_advice
 from bsdraft.engine.personal import build_personal_stats, matches_from_battlelog
 from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
@@ -279,6 +280,18 @@ def reference():
                                brackets=brackets, boosted=list(R.load_ranked_boosted()))
 
 
+@app.get("/api/loadout", response_model=S.LoadoutResponse)
+def loadout(brawler: int, mode: str, map_id: Optional[int] = None):
+    """Which gadget / star power / gear to equip on a drafted brawler, given the mode. Effect-based
+    heuristic (see :mod:`bsdraft.engine.loadout`) — the client overlays the user's owned items on
+    their own pick. Returns an empty (but well-formed) body for an unknown brawler so the hover
+    popover degrades quietly rather than erroring."""
+    adv = loadout_advice(brawler, mode, map_id)
+    if adv is None:
+        return S.LoadoutResponse(brawler_id=brawler, brawler_name="", mode=mode)
+    return S.LoadoutResponse(**adv)
+
+
 @app.get("/api/roster", response_model=S.RosterResponse)
 async def roster(tag: Optional[str] = None):
     """The configured (or given) player's roster — owned brawlers, loadout completeness, and
@@ -296,7 +309,15 @@ async def roster(tag: Optional[str] = None):
         async with BrawlStarsClient() as client:
             r, name = await mastery.fetch_roster(client, t)
         _engine.roster, _engine.roster_name = r, name
-        owned = [S.OwnedBrawler(id=bid, mastery=round(m.score, 3), gaps=m.gaps()) for bid, m in r.items()]
+        owned = [
+            S.OwnedBrawler(
+                id=bid, mastery=round(m.score, 3), gaps=m.gaps(),
+                owned_star_powers=list(m.owned_star_powers),
+                owned_gadgets=list(m.owned_gadgets),
+                owned_gears=[S.OwnedGear(**g) for g in m.owned_gears],
+            )
+            for bid, m in r.items()
+        ]
         resp = S.RosterResponse(loaded=True, tag=t, name=name, owned=owned)
         if len(_roster_cache) > 512:   # bound growth — one entry per unique tag, TTL alone never frees it
             _roster_cache.clear()

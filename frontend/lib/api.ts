@@ -29,9 +29,25 @@ export type RecommendResponse = {
   game_plan: GamePlan | null; next_to_act: string | null;
 };
 
-export type OwnedBrawler = { id: number; mastery: number; gaps: string[] };
+export type OwnedGear = { id: number; name: string; level: number };
+export type OwnedBrawler = {
+  id: number; mastery: number; gaps: string[];
+  // Specific items the player owns on this brawler — populated by /api/roster (empty on the
+  // recommend path). Used to restrict loadout suggestions on the user's own pick to what they have.
+  owned_star_powers: number[]; owned_gadgets: number[]; owned_gears: OwnedGear[];
+};
 export type RosterResponse = {
   loaded: boolean; tag: string; name: string; owned: OwnedBrawler[]; error?: string | null;
+};
+
+export type LoadoutItem = {
+  id: number | null; name: string; kind: "gadget" | "star_power" | "gear";
+  image_url: string; effect: string; description: string;
+  fit: number; recommended: boolean; why: string; source: string;
+};
+export type LoadoutResponse = {
+  brawler_id: number; brawler_name: string; cls: string; mode: string;
+  gadgets: LoadoutItem[]; star_powers: LoadoutItem[]; gears: LoadoutItem[]; note: string;
 };
 
 export type RankInfo = {
@@ -130,5 +146,13 @@ export async function recommend(body: RecommendBody): Promise<RecommendResponse>
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`recommend: ${res.status}`);
+  return res.json();
+}
+
+export async function getLoadout(brawlerId: number, mode: string, mapId?: number | null): Promise<LoadoutResponse> {
+  const qs = new URLSearchParams({ brawler: String(brawlerId), mode });
+  if (mapId != null) qs.set("map_id", String(mapId));
+  const res = await fetch(`${API_BASE}/api/loadout?${qs.toString()}`);
+  if (!res.ok) throw new Error(`loadout: ${res.status}`);
   return res.json();
 }

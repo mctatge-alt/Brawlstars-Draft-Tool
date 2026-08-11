@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Brawler, PickRec, BanRec, Reference, RecommendResponse, Warning, RosterResponse, GamePlan, Health, Meta, RankInfo, TopPick,
-  getReference, getRoster, recommend, getHealth, getMeta, getRank, getTopPicks,
+  LoadoutResponse, LoadoutItem, OwnedBrawler,
+  getReference, getRoster, recommend, getHealth, getMeta, getRank, getTopPicks, getLoadout,
 } from "@/lib/api";
 import AdSlot from "@/components/AdSlot";
 import Logo from "@/components/Logo";
@@ -224,6 +225,143 @@ function SeatHint({ ready, chosen, name, active }: {
   );
 }
 
+// ===== Loadout hover popover — which gadget / star power / gear to run on a drafted brawler.
+// Effect-based advice from /api/loadout; on the user's own seat it's filtered to what they own.
+const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function ItemRow({ it, marked, locked, tag }: {
+  it: { name: string; image_url?: string; effect?: string; description?: string };
+  marked?: boolean; locked?: boolean; tag?: string;
+}) {
+  return (
+    <div className="flex gap-2 items-start py-[3px]" style={{ opacity: locked ? 0.5 : 1 }}>
+      {it.image_url
+        ? <img src={it.image_url} alt="" width={22} height={22} loading="lazy"
+            className="mt-[1px] shrink-0" style={{ width: 22, height: 22, objectFit: "cover" }} />
+        : <span className="mt-[1px] shrink-0 grid place-items-center text-[10px] text-[var(--dim)]"
+            style={{ width: 22, height: 22, background: "var(--panel2)", border: "1px solid var(--line)" }}>⚙</span>}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 flex-wrap leading-tight">
+          <span className="text-[12px] font-semibold" style={{ color: marked ? "var(--gold)" : undefined }}>{it.name}</span>
+          {tag && <span className="mono text-[9px] text-[var(--dim)]">{tag}</span>}
+          {marked && <span className="mono text-[8px] px-1 py-0.5 leading-none font-bold" style={{ background: "var(--gold)", color: "#0a0a0c" }}>★ PICK</span>}
+          {locked && <span className="mono text-[8px] px-1 leading-none border border-[var(--line)] text-[var(--dim)]">🔒 own it</span>}
+        </div>
+        {(it.effect || it.description) && (
+          <div className="mono text-[10px] text-[var(--muted)] leading-snug line-clamp-2">
+            {it.effect && <span style={{ color: "var(--accent)" }}>{it.effect}</span>}
+            {it.effect && it.description ? " · " : ""}{it.description}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccSection({ title, items, isMySeat, ownedIds }: {
+  title: string; items: LoadoutItem[]; isMySeat: boolean; ownedIds: Set<number>;
+}) {
+  if (!items || items.length === 0) return null;
+  const owns = (it: LoadoutItem) => it.id != null && ownedIds.has(it.id);
+  const sorted = [...items].sort((a, b) =>
+    (isMySeat ? Number(owns(b)) - Number(owns(a)) : 0) || b.fit - a.fit);
+  // Marked "pick": the best owned item on your seat, else the best-fit item for the mode.
+  const mark = isMySeat ? sorted.find(owns) : (sorted.find((it) => it.recommended) || sorted[0]);
+  const noneOwned = isMySeat && !mark;
+  return (
+    <div className="mt-2 first:mt-0">
+      <div className="label mb-0.5">{title}</div>
+      {noneOwned && <div className="mono text-[10px] text-[var(--dim)]">you don&apos;t own a {title.toLowerCase()} here yet</div>}
+      {sorted.map((it) => (
+        <ItemRow key={it.id ?? it.name} it={it} marked={mark === it} locked={isMySeat && !owns(it)} />
+      ))}
+    </div>
+  );
+}
+
+function GearSection({ gears, isMySeat, ownedGears }: {
+  gears: LoadoutItem[]; isMySeat: boolean; ownedGears: { id: number; name: string; level: number }[];
+}) {
+  if (!gears || gears.length === 0) return null;
+  const byName = new Map(gears.map((g) => [normName(g.name), g]));
+  if (isMySeat) {
+    if (ownedGears.length) {
+      const enriched = ownedGears
+        .map((og) => ({ og, g: byName.get(normName(og.name)) }))
+        .sort((a, b) => (b.g?.fit ?? 0) - (a.g?.fit ?? 0));
+      const bestName = enriched[0]?.og.name;
+      return (
+        <div className="mt-2">
+          <div className="label mb-0.5">GEARS · YOURS</div>
+          {enriched.map(({ og, g }) => (
+            <ItemRow key={og.id} it={{ name: og.name, effect: g?.effect, description: g?.description }}
+              marked={og.name === bestName} tag={`Lv${og.level}`} />
+          ))}
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2">
+        <div className="label mb-0.5">GEARS</div>
+        <div className="mono text-[10px] text-[var(--dim)]">no gears built here — worth getting:</div>
+        {gears.filter((g) => g.recommended).map((g) => <ItemRow key={g.name} it={g} locked />)}
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2">
+      <div className="label mb-0.5">GEARS</div>
+      {gears.filter((g) => g.recommended).map((g) => <ItemRow key={g.name} it={g} marked />)}
+    </div>
+  );
+}
+
+type SlotRect = { left: number; top: number; bottom: number; width: number };
+
+function LoadoutPopover({ data, isMySeat, owned, accent, rect }: {
+  data: LoadoutResponse | "loading" | undefined;
+  isMySeat: boolean; owned?: OwnedBrawler; accent: string; rect: SlotRect;
+}) {
+  // Fixed, viewport-clamped positioning: centered under the slot but kept fully on-screen, and
+  // flipped above the slot when there isn't room below (the your-team/enemy rows sit low on the page).
+  const W = 292;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 720;
+  const left = Math.max(8, Math.min(rect.left + rect.width / 2 - W / 2, vw - W - 8));
+  const spaceBelow = vh - rect.bottom;
+  const spaceAbove = rect.top;
+  const openUp = spaceBelow < 300 && spaceAbove > spaceBelow;
+  const pos: React.CSSProperties = openUp
+    ? { left, bottom: vh - rect.top + 8, maxHeight: Math.min(spaceAbove - 16, vh * 0.72) }
+    : { left, top: rect.bottom + 8, maxHeight: Math.min(spaceBelow - 16, vh * 0.72) };
+  return (
+    <div onClick={(e) => e.stopPropagation()}
+      className="fixed z-50 w-[292px] max-w-[92vw] panel p-3 text-left cursor-default anim-fade overflow-y-auto"
+      style={{ ...pos, borderColor: "var(--line-strong)", boxShadow: "0 14px 34px rgba(0,0,0,0.55)" }}>
+      {!data || data === "loading" ? (
+        <div className="mono text-[11px] text-[var(--muted)]">Loading loadout…</div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between mb-2 pb-2 border-b border-[var(--line)]">
+            <span className="label" style={{ color: accent }}>◈ {data.brawler_name || "Loadout"}</span>
+            {isMySeat
+              ? <span className="mono text-[9px]" style={{ color: "var(--gold)" }}>YOUR INVENTORY</span>
+              : <span className="mono text-[9px] text-[var(--dim)]">{data.mode}</span>}
+          </div>
+          <AccSection title="GADGET" items={data.gadgets} isMySeat={isMySeat}
+            ownedIds={new Set(owned?.owned_gadgets ?? [])} />
+          <AccSection title="STAR POWER" items={data.star_powers} isMySeat={isMySeat}
+            ownedIds={new Set(owned?.owned_star_powers ?? [])} />
+          <GearSection gears={data.gears} isMySeat={isMySeat} ownedGears={owned?.owned_gears ?? []} />
+          {data.note && (
+            <div className="mono text-[9px] text-[var(--dim)] mt-2 pt-1.5 border-t border-[var(--line)] leading-snug">{data.note}</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function RankWidget({ tag, setTag, rankInfo, loading, onCheck, onClear }: {
   tag: string; setTag: (s: string) => void; rankInfo: RankInfo | null; loading: boolean;
   onCheck: () => void; onClear: () => void;
@@ -377,6 +515,8 @@ export default function DraftBoard() {
   const [query, setQuery] = useState("");
   const [useSearch, setUseSearch] = useState(false);
   const [mySeat, setMySeat] = useState<number | null>(null); // which "our" slot is the user (in pick order)
+  const [hoverSlot, setHoverSlot] = useState<{ zone: Zone; index: number; rect: SlotRect } | null>(null); // drafted slot under the cursor
+  const [loadouts, setLoadouts] = useState<Record<string, LoadoutResponse | "loading">>({}); // cache: `${bid}:${mode}`
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [bootNonce, setBootNonce] = useState(0);
@@ -459,6 +599,24 @@ export default function DraftBoard() {
     [bans, our, their, blindPick]
   );
   const ownedSet = useMemo(() => new Set((roster?.owned || []).map((o) => o.id)), [roster]);
+  const ownedByBrawler = useMemo(() => {
+    const m = new Map<number, OwnedBrawler>();
+    (roster?.owned || []).forEach((o) => m.set(o.id, o));
+    return m;
+  }, [roster]);
+  const loadoutKey = (bid: number) => `${bid}:${mode}`;
+  // Lazily fetch a drafted brawler's loadout advice for the current mode; cache per (brawler, mode)
+  // so re-hovering is instant and switching maps within a mode reuses it. A failed fetch is evicted
+  // so the next hover retries.
+  const ensureLoadout = (bid: number) => {
+    if (!mode) return;
+    const key = loadoutKey(bid);
+    if (loadouts[key]) return;
+    setLoadouts((c) => ({ ...c, [key]: "loading" }));
+    getLoadout(bid, mode, mapId)
+      .then((r) => setLoadouts((c) => ({ ...c, [key]: r })))
+      .catch(() => setLoadouts((c) => { const n = { ...c }; delete n[key]; return n; }));
+  };
   const boostedSet = useMemo(() => new Set(ref?.boosted || []), [ref]);
   const personalizeReady = !!roster?.loaded;
   const bracket = rankInfo?.found ? rankInfo.bracket : null;
@@ -634,11 +792,23 @@ export default function DraftBoard() {
     const bid = arr[index];
     const b = bid != null ? byId.get(bid) : undefined;
     const current = isCurrent(zone, index);
+    // Loadout hint on drafted pick slots (not bans). On the seat you marked as yourself it filters to
+    // what you own; teammate/enemy slots show the mode's general best-fit loadout.
+    const canHint = zone !== "ban" && bid != null;
+    const isMySeat = personalizeReady && zone === "our" && index === mySeat;
+    const hovered = hoverSlot?.zone === zone && hoverSlot?.index === index;
     return (
       <button
         onClick={() => { if (bid != null) setZone(zone, index, null); setActiveOverride({ zone, index }); focusSearch(); }}
+        onMouseEnter={(e) => {
+          if (!canHint) return;
+          const r = e.currentTarget.getBoundingClientRect();
+          setHoverSlot({ zone, index, rect: { left: r.left, top: r.top, bottom: r.bottom, width: r.width } });
+          ensureLoadout(bid!);
+        }}
+        onMouseLeave={() => setHoverSlot((h) => (h && h.zone === zone && h.index === index ? null : h))}
         className="relative shrink-0 group"
-        title={b ? `${b.name} · click to clear & make active` : "click to make this the active slot"}>
+        title={b ? `${b.name} · hover for loadout · click to clear` : "click to make this the active slot"}>
         <span key={bid ?? "empty"} className="block anim-snap">
           {b
             ? <Avatar b={b} size={size} dim={zone === "ban"} ring={current ? accent : undefined} active={current} />
@@ -647,6 +817,11 @@ export default function DraftBoard() {
                 <span className="text-base" style={{ color: current ? accent : "var(--dim)" }}>+</span>
               </span>}
         </span>
+        {canHint && b && <span aria-hidden className="mono absolute -bottom-1 -right-1 text-[8px] px-0.5 leading-none border border-[var(--line)] bg-[var(--panel2)] text-[var(--dim)] opacity-0 group-hover:opacity-100 transition-opacity">⚙</span>}
+        {canHint && hovered && hoverSlot && (
+          <LoadoutPopover data={loadouts[loadoutKey(bid!)]} isMySeat={isMySeat}
+            owned={ownedByBrawler.get(bid!)} accent={accent} rect={hoverSlot.rect} />
+        )}
       </button>
     );
   };
