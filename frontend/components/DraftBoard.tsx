@@ -185,40 +185,41 @@ function FirstPickToggle({ wePickFirst, onToggle }: { wePickFirst: boolean; onTo
   );
 }
 
-// Marks which of your team's three picks is YOU (in pick order). Personalization — owned+free
-// filtering, mastery and your win-rates — then applies only to that seat's turn; teammate picks
-// stay on the pure meta. Replaces the old global personalize toggle.
-function SeatSelector({ mySeat, onChoose, ready, name, active }: {
-  mySeat: number | null; onChoose: (i: number) => void; ready: boolean; name?: string; active: boolean;
+// A checkbox sitting directly under one "Your team" slot: check the one that is YOU. Personalization
+// — owned+free filtering, mastery and your win-rates — then applies only to that seat's turn;
+// teammate picks stay on the pure meta. Single-select: checking one clears the others.
+function SeatCheck({ checked, disabled, onToggle, seat }: {
+  checked: boolean; disabled: boolean; onToggle: () => void; seat: number;
 }) {
+  // The visible box is an inner <span>: a native <button>'s own background-color is unreliable
+  // (the UA button appearance suppresses it), whereas a span paints its fill dependably.
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-      <span className="mono text-[9px] tracking-[0.14em] text-[var(--dim)] shrink-0"
-        title="Mark which of your team's picks is you (in pick order). Only that pick is personalized to your roster + this season's free brawlers; teammate picks use the full meta.">
-        ◦ I&rsquo;M PICK
+    <button type="button" role="checkbox" aria-checked={checked} disabled={disabled}
+      onClick={onToggle} aria-label={`Mark pick ${seat} as you`}
+      title={disabled ? "load your tag to personalize"
+        : checked ? "This pick is you — click to clear" : `Check if pick #${seat} is you`}
+      className="grid place-items-center border-0 bg-transparent p-0 leading-none disabled:opacity-30 disabled:cursor-not-allowed">
+      <span className="grid place-items-center w-[18px] h-[18px] border transition-colors"
+        style={{ borderColor: checked ? "var(--gold)" : "var(--line-strong)",
+                 background: checked ? "var(--gold)" : "var(--panel2)" }}>
+        {checked && <span className="text-[11px] font-bold leading-none" style={{ color: "#0a0a0c" }}>✓</span>}
       </span>
-      <div className="flex items-center gap-1">
-        {[0, 1, 2].map((i) => {
-          const on = mySeat === i;
-          return (
-            <button key={i} type="button" onClick={() => ready && onChoose(i)} disabled={!ready}
-              data-on={on ? "true" : "false"} className="seg px-2.5 py-1 text-[11px] tabular-nums disabled:opacity-40"
-              style={cssVars({ "--seg-c": "var(--gold)" })}
-              title={!ready ? "load your tag to personalize"
-                : on ? "This pick is you — click to clear" : `Your team's pick #${i + 1} is you`}>
-              {i + 1}{on ? " ✓" : ""}
-            </button>
-          );
-        })}
-      </div>
-      {!ready ? (
-        <span className="mono text-[9px] text-[var(--dim)]">load your tag to personalize</span>
-      ) : mySeat != null && (
-        <span className="mono text-[10px] inline-flex items-center gap-1" style={{ color: "var(--gold)" }}
-          title={active ? "personalizing this pick now" : "personalizes when it's your pick's turn"}>
-          ◈ {(name || "YOU").toUpperCase()}{active && " · NOW"}
-        </span>
-      )}
+    </button>
+  );
+}
+
+// One-line status under the seat checkboxes: what to do, or who's being personalized.
+function SeatHint({ ready, chosen, name, active }: {
+  ready: boolean; chosen: boolean; name?: string; active: boolean;
+}) {
+  if (!ready)
+    return <div className="mono text-[9px] text-[var(--dim)] mt-2.5">◦ check the box under your pick — load your tag first</div>;
+  if (!chosen)
+    return <div className="mono text-[9px] text-[var(--dim)] mt-2.5">◦ check the box under your pick to personalize it</div>;
+  return (
+    <div className="mono text-[10px] mt-2.5 inline-flex items-center gap-1" style={{ color: "var(--gold)" }}
+      title={active ? "personalizing this pick now" : "personalizes when it's your pick's turn"}>
+      ◈ {(name || "YOU").toUpperCase()} · YOUR PICK{active && " · NOW"}
     </div>
   );
 }
@@ -633,7 +634,6 @@ export default function DraftBoard() {
     const bid = arr[index];
     const b = bid != null ? byId.get(bid) : undefined;
     const current = isCurrent(zone, index);
-    const idLabel = `${zone === "ban" ? "BAN" : zone === "our" ? "A" : "E"}${zone === "ban" ? String(index + 1).padStart(2, "0") : index + 1}`;
     return (
       <button
         onClick={() => { if (bid != null) setZone(zone, index, null); setActiveOverride({ zone, index }); focusSearch(); }}
@@ -647,8 +647,6 @@ export default function DraftBoard() {
                 <span className="text-base" style={{ color: current ? accent : "var(--dim)" }}>+</span>
               </span>}
         </span>
-        <span className="mono absolute -bottom-4 left-0 text-[8px] tracking-[0.1em]"
-          style={{ color: current ? accent : "var(--dim)" }}>{idLabel}</span>
       </button>
     );
   };
@@ -763,9 +761,16 @@ export default function DraftBoard() {
             <div className={`grid grid-cols-1 gap-x-6 gap-y-6 ${blindPick ? "" : "sm:grid-cols-2"}`}>
               <div>
                 <div className="label mb-2" style={{ color: "var(--blue)" }}>◤ Your team</div>
-                <div className="flex gap-2">{our.map((_, i) => <SlotBox key={i} zone="our" index={i} accent="var(--blue)" />)}</div>
-                <SeatSelector mySeat={mySeat} onChoose={chooseSeat} ready={personalizeReady}
-                  name={roster?.name} active={myTurn} />
+                <div className="flex gap-2">
+                  {our.map((_, i) => (
+                    <div key={i} className="flex flex-col items-center gap-1.5">
+                      <SlotBox zone="our" index={i} accent="var(--blue)" />
+                      <SeatCheck checked={mySeat === i} disabled={!personalizeReady}
+                        onToggle={() => personalizeReady && chooseSeat(i)} seat={i + 1} />
+                    </div>
+                  ))}
+                </div>
+                <SeatHint ready={personalizeReady} chosen={mySeat != null} name={roster?.name} active={myTurn} />
                 {blindPick && (
                   <div className="mono text-[10px] text-[var(--muted)] mt-3">🙈 ENEMY HIDDEN AT DIAMOND · PICKS OPTIMIZE YOUR OWN COMP.</div>
                 )}
