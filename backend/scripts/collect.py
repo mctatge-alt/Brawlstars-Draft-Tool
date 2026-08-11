@@ -132,13 +132,19 @@ async def _loop(target: int, countries: list, interval: int, do_publish: bool,
     while True:
         cycle += 1
         print(f"\n=== crawl cycle {cycle} ===")
-        await _run(target, countries, revisit_after)
-        if do_publish:
-            _try_publish()
-            _publish_stats()
-            _publish_rank_index()
-        if meta_check:
-            _check_meta(retrain_on_shift, publish=do_publish)
+        try:
+            await _run(target, countries, revisit_after)
+            if do_publish:
+                _try_publish()
+                _publish_stats()
+                _publish_rank_index()
+            if meta_check:
+                _check_meta(retrain_on_shift, publish=do_publish)
+        except Exception as e:  # noqa: BLE001 — one bad cycle (network drop, publish hiccup)
+            # must never kill the daemon; log it and retry after the normal sleep. Without this
+            # a transport error crashed the process, forcing a launchd restart + a full
+            # matches.jsonl state reload, and reset the cycle counter to 1.
+            print(f"cycle {cycle} aborted: {e!r} — retrying after the sleep")
         print(f"sleeping {interval}s …  (Ctrl-C to stop)")
         await asyncio.sleep(interval)
 

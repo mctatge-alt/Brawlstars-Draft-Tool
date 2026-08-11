@@ -17,12 +17,14 @@ over time. Set the window to 0 to disable re-scanning (visit each player at most
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections import deque
 from dataclasses import asdict
 from typing import Iterable
 
+import httpx
 from tqdm import tqdm
 
 from bsdraft.collect.client import BrawlStarsClient, BrawlStarsError, normalize_tag
@@ -118,6 +120,33 @@ class Crawler:
                 self._enqueue(p.get("tag", ""))
         return len(self.frontier)
 
+    def _mark_scanned(self, tag: str, vis) -> None:
+        """Record a completed visit (remember the timestamp and append it to visited_tags.txt)
+        so the tag isn't re-fetched until the revisit window elapses. Only called once we've
+        actually reached the API for this tag — a success or a definite per-tag error — never
+        on a transport failure, which is the network's fault, not the tag's."""
+        self.visited[tag] = self._now
+        vis.write(f"{tag}\t{self._now}\n")
+        vis.flush()
+
+    async def _await_reconnect(self, max_wait: float = 300.0) -> bool:
+        """Block until the API is reachable again after a transport (DNS/connection) failure,
+        backing off exponentially up to ``max_wait`` seconds. Returns True once a request gets
+        through, False if it gave up — so the caller can end the cycle cleanly. This is what
+        turns a network outage from a process-killing crash into a bounded pause."""
+        waited, delay = 0.0, 5.0
+        while waited < max_wait:
+            await asyncio.sleep(delay)
+            waited += delay
+            try:
+                await self.client.get_top_players(limit=1)
+                return True
+            except BrawlStarsError:
+                return True  # got an HTTP response — connectivity is back (an endpoint error is fine)
+            except httpx.TransportError:
+                delay = min(delay * 2, 60.0)
+        return False
+
     async def run(self, target_matches: int) -> int:
         new = 0
         self._now = time.time()
@@ -128,15 +157,25 @@ class Crawler:
             while self.frontier and new < target_matches:
                 tag = self.frontier.popleft()
                 self.queued.discard(tag)
-                # Mark scanned before the fetch (as before): a failing tag shouldn't be retried
-                # until the revisit window elapses. The timestamp is what makes that bounded.
-                self.visited[tag] = self._now
-                vis.write(f"{tag}\t{self._now}\n")
-                vis.flush()
                 try:
                     battles = await self.client.get_battlelog(tag)
-                except BrawlStarsError:
+                except httpx.TransportError:
+                    # The network dropped (DNS/connection failure) — not this tag's fault.
+                    # Don't mark it scanned (it deserves a real fetch), put it back on the
+                    # frontier, and wait for connectivity to return. If it doesn't recover,
+                    # end the cycle cleanly: the outer --loop sleeps and retries, so a blip
+                    # never crashes the daemon or falsely marks a tag scanned for the whole
+                    # revisit window.
+                    self._enqueue(tag)
+                    if not await self._await_reconnect():
+                        break
                     continue
+                except BrawlStarsError:
+                    # A real per-tag failure (private profile, 404, auth) — mark scanned so we
+                    # don't hammer it again until the revisit window elapses.
+                    self._mark_scanned(tag, vis)
+                    continue
+                self._mark_scanned(tag, vis)
                 for entry in battles:
                     match = parse_match(entry, queried_tag=tag)
                     if match is None:
