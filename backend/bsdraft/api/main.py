@@ -275,7 +275,8 @@ def reference():
         for m in R.load_ranked_maps()
     ]
     brackets = [b for b in BRACKETS if _engine and b in _engine.bracket_stats]
-    return S.ReferenceResponse(brawlers=brawlers, maps=maps, modes=list(RANKED_MODES), brackets=brackets)
+    return S.ReferenceResponse(brawlers=brawlers, maps=maps, modes=list(RANKED_MODES),
+                               brackets=brackets, boosted=list(R.load_ranked_boosted()))
 
 
 @app.get("/api/roster", response_model=S.RosterResponse)
@@ -395,15 +396,36 @@ class _ReqMastery:
         return self._gaps
 
 
+class _BoostedMastery:
+    """Mastery stand-in for a season's free/"boosted" brawler the player doesn't own. Ranked hands
+    it out fully maxed (all star powers / gadgets / gears / hypercharge) but the player has no
+    history on it, so it scores as full *build* and zero *comfort* — mirroring
+    :attr:`engine.mastery.Mastery.score` (``0.60*build + 0.40*comfort``) at ``build=1``, comfort
+    0. No loadout gaps, since it's maxed."""
+    __slots__ = ()
+    score = 0.60
+
+    def gaps(self) -> List[str]:
+        return []
+
+
 def _roster_for(req: S.RecommendRequest):
     """Roster dict ``{brawler_id: mastery-like}`` to personalize against, or None. Prefers the
     client-sent roster (the only source on the public host), then the server's own roster
-    (local/home, where the IP-locked key can fetch it). Returns None unless ``personalize`` is set."""
+    (local/home, where the IP-locked key can fetch it). This season's free/"boosted" brawlers are
+    folded in as available-at-full-loadout so they're recommendable even when unowned (an owned
+    one keeps its real mastery). Returns None unless ``personalize`` is set."""
     if not req.personalize:
         return None
     if req.roster:
-        return {e.id: _ReqMastery(e.mastery, e.gaps) for e in req.roster}
-    return _engine.roster or None
+        roster = {e.id: _ReqMastery(e.mastery, e.gaps) for e in req.roster}
+    else:
+        roster = dict(_engine.roster) if _engine.roster else None
+    if roster is None:
+        return None
+    for bid in R.load_ranked_boosted():
+        roster.setdefault(bid, _BoostedMastery())  # owned boosted brawler keeps its real mastery
+    return roster
 
 
 @app.post("/api/recommend", response_model=S.RecommendResponse)

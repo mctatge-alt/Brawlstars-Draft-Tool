@@ -20,6 +20,11 @@ name: keep-warm
 #     served a partial payload, not that Supercell deleted a brawler). See
 #     backend/bsdraft/data/catalog.py. This is the structured counterpart to balance-watch:
 #     gears/hypercharges/buffies are not in any catalog endpoint, so only the notes catch those.
+#   * boosted-watch — once a day, scrape the release-notes "Ranked" section for the season's
+#     free/"boosted" brawler rotation (backend/bsdraft/collect/boosted.py) and open a PR to
+#     data/reference/ranked_boosted.json when it changes. Never auto-merges: a rotation swaps the
+#     active set wholesale and the notes carry no dates, so a human confirms which season is live.
+#     A layout drift or an unmatched brawler name files a needs-review issue instead of a bad PR.
 #   * pipeline-stale — once a day, alert if the crawler stopped publishing fresh match data.
 # Set repo variable RENDER_HEALTH_URL to "<your-render-url>/api/health"
 #   (repo Settings -> Secrets and variables -> Actions -> Variables -> New repository variable).
@@ -372,3 +377,99 @@ jobs:
             --description "Automated: official release notes changed (balance / new brawler)" --force
           gh issue create --title "$TITLE" --label balance-change --body-file "$BODY"
           echo "Filed balance-change issue for fingerprint ${FP}."
+
+  boosted-watch:
+    # Only on the daily cron (or a manual run) — not every 10 minutes.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 13 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the rotation-update branch
+      pull-requests: write   # open the PR
+      issues: write          # alert when a name won't resolve / the layout drifted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install scraper deps
+        # boosted.py needs only httpx at runtime (the reference layer it imports is stdlib).
+        run: pip install "httpx>=0.27"
+      - name: Scrape the Ranked boosted rotation and open a PR when it changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: bot/boosted-refresh
+        run: |
+          BODY="$RUNNER_TEMP/boosted-pr.md"
+          # Human summary to the log for visibility.
+          PYTHONPATH=backend python -m bsdraft.collect.boosted || true
+          # --pr-body writes the PR/issue markdown + a one-line JSON header; --write refreshes
+          # data/reference/ranked_boosted.json only on a clean, fully-resolved change (it *skips*,
+          # not fails, on an unmatched name), so the header is emitted either way and we branch on
+          # it. Non-zero exit = the site was down / layout blew up -> skip; the next run retries.
+          if ! HEADER=$(PYTHONPATH=backend python -m bsdraft.collect.boosted --pr-body "$BODY" --write); then
+            echo "Scrape failed (site down or layout changed) — skipping this run." >&2
+            exit 0
+          fi
+          echo "$HEADER" | jq .
+
+          if [ "$(jq -r '.changed' <<<"$HEADER")" != "true" ]; then
+            echo "Ranked rotation matches the committed file — nothing to do."
+            exit 0
+          fi
+
+          FP=$(jq -r '.fingerprint' <<<"$HEADER")
+          TITLE=$(jq -r '.title' <<<"$HEADER")
+          LAYOUT=$(jq -r '.layout_warning' <<<"$HEADER")
+          UNRESOLVED=$(jq -r '.unresolved | length' <<<"$HEADER")
+
+          gh label create boosted-change --color E8C34A \
+            --description "Automated: Ranked free/boosted brawler rotation changed" --force
+          gh label create needs-review --color B60205 \
+            --description "Automated: needs a human before it can land" --force
+
+          # A layout drift or an unmatched brawler name means the file was NOT rewritten (nothing
+          # safe to commit) — alert a human via an issue instead, deduped on the fingerprint marker.
+          if [ "$LAYOUT" = "true" ] || [ "${UNRESOLVED:-0}" -gt 0 ]; then
+            MARKER="<!-- bs-boosted:${FP} -->"
+            EXISTS=$(gh issue list --label boosted-change --state all --limit 50 --json body |
+                       jq --arg m "$MARKER" '[.[] | select(.body | contains($m))] | length')
+            if [ "${EXISTS:-0}" -gt 0 ]; then
+              echo "Already alerted on fingerprint ${FP} — skipping."
+              exit 0
+            fi
+            gh issue create --title "$TITLE" --label boosted-change --label needs-review --body-file "$BODY"
+            echo "Filed boosted-change issue for fingerprint ${FP} (layout/unmatched — see body)."
+            exit 0
+          fi
+
+          # Clean change: --write already refreshed the file. Gate on the serving loader resolving
+          # it to a non-empty set before any of it is committed.
+          PYTHONPATH=backend python -c "from bsdraft.data import reference as R; assert R.load_ranked_boosted(), 'boosted list resolved empty'"
+
+          git add -- data/reference/ranked_boosted.json
+          if git diff --cached --quiet; then
+            echo "Header said changed but no tracked file moved — nothing to commit."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Give --force-with-lease a basis to compare against on the shallow checkout (see catalog-watch).
+          git fetch --no-tags --depth=1 origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
+          git checkout -B "$BRANCH"
+          git commit -m "$TITLE" -m "Automated by the boosted-watch job. Confirm which season is live in-game and set it as 'active' before merging — the notes carry no dates."
+          git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
+
+          # Never auto-merge: a rotation swaps the active set wholesale and the notes carry no
+          # dates, so a human confirms which season is live. Always leaves the PR needs-review.
+          PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$PR" ]; then
+            PR=$(gh pr create --head "$BRANCH" --base main --title "$TITLE" \
+                   --label boosted-change --label needs-review --body-file "$BODY" | grep -oE '[0-9]+$')
+            echo "Opened PR #$PR (needs-review — confirm the active season)."
+          else
+            gh pr edit "$PR" --title "$TITLE" --body-file "$BODY" \
+              --add-label boosted-change --add-label needs-review
+            echo "Updated existing PR #$PR."
+          fi

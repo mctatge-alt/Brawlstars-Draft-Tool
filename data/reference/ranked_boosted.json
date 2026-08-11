@@ -1,0 +1,26 @@
+{
+  "_comment": "Ranked free / 'boosted' brawlers — the maxed brawlers everyone may use in Ranked this season, scraped from the release-notes 'Ranked' section by backend/bsdraft/collect/boosted.py (the boosted-watch CI job). 'active' is the current season; the serving layer resolves the names to ids and treats them as owned-at-full-loadout when personalizing. Hand-editable.",
+  "source_url": "https://supercell.com/en/games/brawlstars/blog/release-notes/release-notes-june-2026",
+  "scraped_at": "2026-08-11",
+  "valid_until": null,
+  "active": {
+    "season": "Season 1",
+    "brawlers": [
+      "Berry",
+      "Tara",
+      "Meg"
+    ],
+    "featured_mode": "Gem Grab"
+  },
+  "upcoming": [
+    {
+      "season": "Season 2",
+      "brawlers": [
+        "Trunk",
+        "Willow",
+        "Kaze"
+      ],
+      "featured_mode": "Brawl Ball"
+    }
+  ]
+}

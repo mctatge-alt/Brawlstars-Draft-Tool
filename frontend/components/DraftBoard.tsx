@@ -185,6 +185,44 @@ function FirstPickToggle({ wePickFirst, onToggle }: { wePickFirst: boolean; onTo
   );
 }
 
+// Marks which of your team's three picks is YOU (in pick order). Personalization — owned+free
+// filtering, mastery and your win-rates — then applies only to that seat's turn; teammate picks
+// stay on the pure meta. Replaces the old global personalize toggle.
+function SeatSelector({ mySeat, onChoose, ready, name, active }: {
+  mySeat: number | null; onChoose: (i: number) => void; ready: boolean; name?: string; active: boolean;
+}) {
+  return (
+    <div className="mt-6 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+      <span className="mono text-[9px] tracking-[0.14em] text-[var(--dim)] shrink-0"
+        title="Mark which of your team's picks is you (in pick order). Only that pick is personalized to your roster + this season's free brawlers; teammate picks use the full meta.">
+        ◦ I&rsquo;M PICK
+      </span>
+      <div className="flex items-center gap-1">
+        {[0, 1, 2].map((i) => {
+          const on = mySeat === i;
+          return (
+            <button key={i} type="button" onClick={() => ready && onChoose(i)} disabled={!ready}
+              data-on={on ? "true" : "false"} className="seg px-2.5 py-1 text-[11px] tabular-nums disabled:opacity-40"
+              style={cssVars({ "--seg-c": "var(--gold)" })}
+              title={!ready ? "load your tag to personalize"
+                : on ? "This pick is you — click to clear" : `Your team's pick #${i + 1} is you`}>
+              {i + 1}{on ? " ✓" : ""}
+            </button>
+          );
+        })}
+      </div>
+      {!ready ? (
+        <span className="mono text-[9px] text-[var(--dim)]">load your tag to personalize</span>
+      ) : mySeat != null && (
+        <span className="mono text-[10px] inline-flex items-center gap-1" style={{ color: "var(--gold)" }}
+          title={active ? "personalizing this pick now" : "personalizes when it's your pick's turn"}>
+          ◈ {(name || "YOU").toUpperCase()}{active && " · NOW"}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function RankWidget({ tag, setTag, rankInfo, loading, onCheck, onClear }: {
   tag: string; setTag: (s: string) => void; rankInfo: RankInfo | null; loading: boolean;
   onCheck: () => void; onClear: () => void;
@@ -337,7 +375,7 @@ export default function DraftBoard() {
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [query, setQuery] = useState("");
   const [useSearch, setUseSearch] = useState(false);
-  const [personalize, setPersonalize] = useState(false);
+  const [mySeat, setMySeat] = useState<number | null>(null); // which "our" slot is the user (in pick order)
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [bootNonce, setBootNonce] = useState(0);
@@ -371,6 +409,11 @@ export default function DraftBoard() {
     if (savedTag) {
       setTag(savedTag);
       getRank(savedTag).then(setRankInfo).catch(() => {});
+    }
+    const savedSeat = localStorage.getItem("bsdraft.myseat");  // null when never chosen — must stay null (personalization off by default)
+    if (savedSeat != null) {
+      const n = Number(savedSeat);
+      if (Number.isInteger(n) && n >= 0 && n < TEAM_N) setMySeat(n);
     }
     return () => { cancelled = true; };
   }, [bootNonce]);
@@ -415,6 +458,7 @@ export default function DraftBoard() {
     [bans, our, their, blindPick]
   );
   const ownedSet = useMemo(() => new Set((roster?.owned || []).map((o) => o.id)), [roster]);
+  const boostedSet = useMemo(() => new Set(ref?.boosted || []), [ref]);
   const personalizeReady = !!roster?.loaded;
   const bracket = rankInfo?.found ? rankInfo.bracket : null;
   const personalTag = rankInfo?.found ? rankInfo.tag : null;
@@ -447,6 +491,17 @@ export default function DraftBoard() {
   );
   const pickNo = orderPos >= 0 ? orderPos - BAN_N + 1 : 0;
 
+  // Personalize only the user's OWN pick: when the active slot is the seat they marked as
+  // themselves. Teammate/enemy/ban slots draw from the full pool (their rosters aren't ours).
+  const myTurn = personalizeReady && mySeat != null && active != null
+    && active.zone === "our" && active.index === mySeat;
+  const chooseSeat = (i: number) => setMySeat((cur) => {
+    const next = cur === i ? null : i;   // clicking the current seat clears it (personalization off)
+    if (next == null) localStorage.removeItem("bsdraft.myseat");
+    else localStorage.setItem("bsdraft.myseat", String(next));
+    return next;
+  });
+
   useEffect(() => {
     if (blindPick && their.some((x) => x != null)) {
       setTheir(Array(TEAM_N).fill(null));
@@ -456,16 +511,17 @@ export default function DraftBoard() {
 
   useEffect(() => {
     if (!mapId || !mode) return;
-    const usePersonal = personalize && personalizeReady;
+    // Roster + mastery + your win-rates apply to YOUR pick only (the seat you marked); a teammate
+    // or enemy pick is scored on the pure meta, so its recommendations aren't filtered to what you own.
     const body = {
       map_id: mapId, mode,
       our_team: our.filter((x): x is number => x != null),
       their_team: blindPick ? [] : their.filter((x): x is number => x != null),
       bans: bans.filter((x): x is number => x != null),
       we_pick_first: wePickFirst, solo_queue: solo, phase,
-      use_search: blindPick ? false : useSearch, personalize: usePersonal,
-      personal_tag: personalTag,
-      roster: usePersonal ? roster?.owned ?? null : null,
+      use_search: blindPick ? false : useSearch, personalize: myTurn,
+      personal_tag: myTurn ? personalTag : null,
+      roster: myTurn ? roster?.owned ?? null : null,
       rank_bracket: bracket, top: 12,
     };
     setLoading(true);
@@ -476,7 +532,7 @@ export default function DraftBoard() {
         .finally(() => setLoading(false));
     }, 120);
     return () => clearTimeout(t);
-  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, personalize, personalizeReady, roster, bracket, personalTag, blindPick]);
+  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, myTurn, roster, bracket, personalTag, blindPick]);
 
   useEffect(() => {
     if (!mapId || !mode) return;
@@ -554,11 +610,13 @@ export default function DraftBoard() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [ref, query]);
 
-  const placeable = (id: number) => !used.has(id) && !(personalize && personalizeReady && !ownedSet.has(id));
+  // On your own pick, restrict to brawlers you can actually play — owned or this season's free
+  // "boosted" brawlers; otherwise anything unused is placeable.
+  const placeable = (id: number) => !used.has(id) && (!myTurn || ownedSet.has(id) || boostedSet.has(id));
   // the brawler Enter will place: first valid match for the current query
   const topMatch = useMemo(
     () => (query.trim() && step.kind !== "done" ? filtered.find((b) => placeable(b.id)) : undefined),
-    [query, filtered, used, personalize, personalizeReady, ownedSet, step.kind]
+    [query, filtered, used, myTurn, ownedSet, boostedSet, step.kind]
   );
 
   const rotation = useMemo(
@@ -645,12 +703,6 @@ export default function DraftBoard() {
             ⟲ DEEP SEARCH {useSearch ? "ON" : "OFF"}
           </button>
         )}
-        <button onClick={() => personalizeReady && setPersonalize((v) => !v)} disabled={!personalizeReady}
-          data-on={personalize ? "true" : "false"} className="seg px-2.5 py-1.5 disabled:opacity-40"
-          style={cssVars({ "--seg-c": "var(--gold)" })}
-          title={personalizeReady ? `Personalize to ${roster?.name}'s roster & mastery` : "no roster loaded"}>
-          ◈ {personalize && roster?.name ? roster.name.toUpperCase() : "PERSONALIZE"}{personalizeReady ? (personalize ? " ✓" : "") : " —"}
-        </button>
         <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-3">
           {health != null && (
             <span className="mono text-[11px] flex items-center gap-1.5 tabular-nums"
@@ -712,8 +764,10 @@ export default function DraftBoard() {
               <div>
                 <div className="label mb-2" style={{ color: "var(--blue)" }}>◤ Your team</div>
                 <div className="flex gap-2">{our.map((_, i) => <SlotBox key={i} zone="our" index={i} accent="var(--blue)" />)}</div>
+                <SeatSelector mySeat={mySeat} onChoose={chooseSeat} ready={personalizeReady}
+                  name={roster?.name} active={myTurn} />
                 {blindPick && (
-                  <div className="mono text-[10px] text-[var(--muted)] mt-5">🙈 ENEMY HIDDEN AT DIAMOND · PICKS OPTIMIZE YOUR OWN COMP.</div>
+                  <div className="mono text-[10px] text-[var(--muted)] mt-3">🙈 ENEMY HIDDEN AT DIAMOND · PICKS OPTIMIZE YOUR OWN COMP.</div>
                 )}
               </div>
               {!blindPick && (
@@ -765,24 +819,30 @@ export default function DraftBoard() {
           <div className="panel p-3 order-3">
             <div className="flex items-center justify-between mb-2.5">
               <span className="label">{filtered.length} BRAWLERS · TAP OR TYPE ABOVE</span>
-              {personalize && personalizeReady && <span className="mono text-[10px]" style={{ color: "var(--gold)" }}>◈ OWNED ONLY</span>}
+              {myTurn && <span className="mono text-[10px]" style={{ color: "var(--gold)" }}>◈ OWNED + FREE</span>}
             </div>
             <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
               {filtered.map((b) => {
                 const isUsed = used.has(b.id);
-                const unowned = personalize && personalizeReady && !ownedSet.has(b.id);
+                const isBoosted = boostedSet.has(b.id);
+                // dimmed only on your own pick, when it's neither owned nor a free "boosted" brawler
+                const restricted = myTurn && !ownedSet.has(b.id) && !isBoosted;
                 const isTop = topMatch?.id === b.id;
                 return (
-                  <button key={b.id} onClick={() => place(b.id)} disabled={isUsed || unowned || step.kind === "done"}
+                  <button key={b.id} onClick={() => place(b.id)} disabled={isUsed || restricted || step.kind === "done"}
                     className="group relative disabled:cursor-not-allowed"
-                    title={unowned ? `${b.name} · not owned` : `${b.name} (${b.cls})`}>
+                    title={restricted ? `${b.name} · not owned` : isBoosted ? `${b.name} (${b.cls}) · free this season` : `${b.name} (${b.cls})`}>
                     <span className="tile block p-[3px]"
                       style={cssVars({ "--tc": CLASS_COLOR[b.cls] || "#26303f", borderColor: isTop ? "var(--accent)" : undefined, boxShadow: isTop ? "inset 0 0 0 1px var(--accent)" : undefined })}>
-                      <Avatar b={b} size={44} dim={isUsed || unowned} />
+                      <Avatar b={b} size={44} dim={isUsed || restricted} />
                     </span>
                     {isTop && <span className="mono absolute top-0 right-0 text-[8px] px-1 leading-tight" style={{ background: "var(--accent)", color: "#0a0a0c" }}>⏎</span>}
+                    {myTurn && isBoosted && !isTop && !isUsed && (
+                      <span className="mono absolute top-0 right-0 text-[7px] px-0.5 leading-tight font-bold"
+                        style={{ background: "var(--gold)", color: "#0a0a0c" }} title="free maxed brawler this Ranked season">FREE</span>
+                    )}
                     <span className="mono block text-[8px] truncate w-full text-center mt-0.5 tracking-tight"
-                      style={{ color: unowned ? "var(--dim)" : "var(--muted)" }}>{b.name}</span>
+                      style={{ color: restricted ? "var(--dim)" : "var(--muted)" }}>{b.name}</span>
                   </button>
                 );
               })}

@@ -152,6 +152,7 @@ class ReferenceResponse(BaseModel):
     maps: List[MapRef]
     modes: List[str]
     brackets: List[str] = []     # rank brackets with enough data to condition on
+    boosted: List[int] = []      # ids of this season's free/"boosted" Ranked brawlers
 
 
 class RosterResponse(BaseModel):

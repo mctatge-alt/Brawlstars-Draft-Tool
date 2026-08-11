@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,7 @@ from bsdraft.constants import (
 )
 
 CLASS_OVERRIDES_PATH = Path(__file__).resolve().parent / "class_overrides.json"
+RANKED_BOOSTED_PATH = REFERENCE_DIR / "ranked_boosted.json"
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,39 @@ def load_ranked_maps() -> tuple:
         )
     maps.sort(key=lambda m: (m.mode, m.name))
     return tuple(maps)
+
+
+@lru_cache(maxsize=1)
+def load_ranked_boosted() -> tuple:
+    """Brawler ids of the current season's Ranked **free / "boosted" brawlers** — the maxed
+    brawlers everyone may use in Ranked regardless of ownership. Read from the committed
+    ``ranked_boosted.json`` (maintained by the ``boosted-watch`` scraper, see
+    :mod:`bsdraft.collect.boosted`); the ``active.brawlers`` **names** are resolved to ids here so
+    a catalog rename can't strand a hard-coded id.
+
+    Fail-safe (the list must never *mislead* — telling a player they can freely pick a brawler
+    they actually can't is worse than showing none): returns ``()`` when the file is absent /
+    unreadable, when no name resolves, or when an optional ``valid_until`` date has passed."""
+    if not RANKED_BOOSTED_PATH.exists():
+        return ()
+    try:
+        doc = _load_json(RANKED_BOOSTED_PATH)
+    except (json.JSONDecodeError, OSError):
+        return ()
+    valid_until = (doc.get("valid_until") or "").strip()
+    if valid_until:
+        try:
+            if date.fromisoformat(valid_until) < date.today():
+                return ()
+        except ValueError:
+            pass  # malformed date — ignore the guard rather than drop the rotation
+    active = doc.get("active") or {}
+    ids = []
+    for name in active.get("brawlers", []) or []:
+        b = brawler_by_name(name) if isinstance(name, str) else None
+        if b is not None and b.id not in ids:
+            ids.append(b.id)
+    return tuple(ids)
 
 
 def summary() -> str:
