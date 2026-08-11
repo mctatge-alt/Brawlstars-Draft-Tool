@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     # frontend's meta banner). The crawler writes + publishes it after each cycle's meta check
     # (see scripts/collect.py). Unset = compute locally from the matches.
     meta_report_url: str = ""
+    # URL of the published per-item win-rate table (itemstats.json.gz Release asset). When set,
+    # /api/loadout serves DATA-DRIVEN gadget/star-power picks (single-item-owner inference over the
+    # matches x ownership-profiles join) instead of the effect heuristic, falling back to the
+    # heuristic per item where the sample is thin. The home machine builds + publishes it (see
+    # scripts/export_itemstats.py, which needs the collected profiles). Unset = heuristic only.
+    itemstats_url: str = ""
     refresh_seconds: int = 600  # re-sync interval in seconds (0 disables the refresh loop)
     # Comma-separated allowed CORS origins. "*" allows any (fine for the read-only meta API).
     # Lock this to your site's origin on the roster host you expose via the tunnel, e.g.

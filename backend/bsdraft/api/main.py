@@ -159,6 +159,11 @@ async def _refresh_loop() -> None:
                 if await loop.run_in_executor(None, sync.sync_model, settings.model_url):
                     _engine.model = await loop.run_in_executor(None, WinProbModel)  # atomic swap
                     logger.info("win-prob model hot-swapped (available=%s)", _engine.model.available)
+            # Item win-rate table: just refresh the file — the loadout loader reloads it on mtime
+            # change per request, so there's no engine object to hot-swap.
+            if settings.itemstats_url:
+                if await loop.run_in_executor(None, sync.sync_itemstats, settings.itemstats_url):
+                    logger.info("item win-rate table updated")
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — a refresh hiccup must not kill the loop
@@ -180,6 +185,8 @@ async def lifespan(app: FastAPI):
         await loop.run_in_executor(None, sync.sync_rank_index, settings.rank_index_url)
     if settings.meta_report_url:
         await loop.run_in_executor(None, sync.sync_meta_report, settings.meta_report_url)
+    if settings.itemstats_url:
+        await loop.run_in_executor(None, sync.sync_itemstats, settings.itemstats_url)
     g, br = _build_stats()
     _engine = DraftEngine(g, WinProbModel(), bracket_stats=br)
     if settings.player_tag:
@@ -199,7 +206,8 @@ async def lifespan(app: FastAPI):
             _engine.roster, _engine.roster_name = None, ""
     task = None
     if (settings.data_url or settings.model_url or settings.stats_url
-            or settings.rank_index_url or settings.meta_report_url) and settings.refresh_seconds > 0:
+            or settings.rank_index_url or settings.meta_report_url or settings.itemstats_url
+            ) and settings.refresh_seconds > 0:
         task = asyncio.create_task(_refresh_loop())
     try:
         yield

@@ -28,6 +28,7 @@ MODEL_PATH = PROCESSED_DIR / "winprob.npz"
 STATS_PATH = PROCESSED_DIR / "stats.json.gz"
 RANK_INDEX_PATH = PROCESSED_DIR / "rank_index.json.gz"
 META_REPORT_PATH = PROCESSED_DIR / "meta_report.json"
+ITEMSTATS_PATH = PROCESSED_DIR / "itemstats.json.gz"
 DEFAULT_TAG = "data-latest"
 
 
@@ -117,6 +118,20 @@ def publish_meta_report(tag: str = DEFAULT_TAG) -> None:
     print(f"published {META_REPORT_PATH.name} ({META_REPORT_PATH.stat().st_size / 1e3:.1f} KB) -> release '{tag}'")
 
 
+def publish_itemstats(tag: str = DEFAULT_TAG) -> None:
+    """Upload the per-item win-rate table (itemstats.json.gz) to the release so an API with
+    ITEMSTATS_URL set serves data-driven loadout picks instead of the effect heuristic. Run after
+    scripts/export_itemstats.py (which needs the collected ownership profiles)."""
+    if not ITEMSTATS_PATH.exists():
+        raise FileNotFoundError(
+            f"No item stats at {ITEMSTATS_PATH} — build them first (scripts/export_itemstats.py).")
+    _ensure_release(tag)
+    res = _gh("release", "upload", tag, str(ITEMSTATS_PATH), "--clobber")
+    if res.returncode != 0:
+        raise RuntimeError(f"gh release upload (itemstats) failed: {res.stderr.strip()}")
+    print(f"published {ITEMSTATS_PATH.name} ({ITEMSTATS_PATH.stat().st_size / 1e3:.1f} KB) -> release '{tag}'")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Publish the dataset and/or model/stats/rank index to a GitHub Release.")
     ap.add_argument("--tag", default=DEFAULT_TAG, help="release tag to upload to")
@@ -124,10 +139,12 @@ def main() -> None:
     ap.add_argument("--stats", action="store_true", help="also upload stats.json.gz (precomputed stats)")
     ap.add_argument("--rank", action="store_true", help="also upload rank_index.json.gz (rank index)")
     ap.add_argument("--meta", action="store_true", help="also upload meta_report.json (drift report)")
+    ap.add_argument("--itemstats", action="store_true", help="also upload itemstats.json.gz (per-item win rates)")
     ap.add_argument("--only-model", action="store_true", help="upload only winprob.npz, not the dataset")
     ap.add_argument("--only-stats", action="store_true", help="upload only stats.json.gz, not the dataset")
     ap.add_argument("--only-rank", action="store_true", help="upload only rank_index.json.gz, not the dataset")
     ap.add_argument("--only-meta", action="store_true", help="upload only meta_report.json, not the dataset")
+    ap.add_argument("--only-itemstats", action="store_true", help="upload only itemstats.json.gz, not the dataset")
     args = ap.parse_args()
     if args.only_model:
         publish_model(args.tag)
@@ -141,6 +158,9 @@ def main() -> None:
     if args.only_meta:
         publish_meta_report(args.tag)
         return
+    if args.only_itemstats:
+        publish_itemstats(args.tag)
+        return
     publish(args.tag)
     if args.model:
         publish_model(args.tag)
@@ -150,6 +170,8 @@ def main() -> None:
         publish_rank_index(args.tag)
     if args.meta:
         publish_meta_report(args.tag)
+    if args.itemstats:
+        publish_itemstats(args.tag)
 
 
 if __name__ == "__main__":

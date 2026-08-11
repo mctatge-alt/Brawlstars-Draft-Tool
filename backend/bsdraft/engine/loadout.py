@@ -23,6 +23,11 @@ from typing import List, Optional
 
 from bsdraft.constants import REFERENCE_DIR
 from bsdraft.data import reference as R
+from bsdraft.engine import itemstats as IS
+
+# Maps a measured win-rate delta (points) onto the 0..1 `fit` scale the UI already sorts by, so a
+# measured pick slots in beside the heuristic fits: +5% -> 0.65, +15% -> 0.95, -5% -> 0.35.
+_FIT_PER_DELTA = 3.0
 
 # ---- effect taxonomy -------------------------------------------------------------------------
 # Each gadget/star power is bucketed into one effect by scanning its description for keywords.
@@ -113,10 +118,25 @@ def _gear_guide() -> dict:
     return {"note": doc.get("note", ""), "gears": doc.get("gears", []) or []}
 
 
-def _advise_accessory(acc: R.Accessory, mode: str) -> dict:
+def _apply_measured(item: dict, cell: dict) -> None:
+    """Overlay a *significant* measured win-rate cell onto a heuristic item: flip source to
+    'winrate', set fit from the delta, and replace the reasoning with the measured number. The delta
+    is the item's edge over the brawler's OTHER single-owned items of that type (already shrunk +
+    BH-FDR-gated at build time), and is honestly signed — a measured negative is shown, not hidden;
+    it just won't win :func:`_mark_best` (lower fit)."""
+    delta = float(cell.get("delta", 0.0))
+    item["source"] = "winrate"
+    item["fit"] = round(min(1.0, max(0.0, 0.5 + _FIT_PER_DELTA * delta)), 3)
+    sign = "+" if delta >= 0 else "−"
+    kind = item["kind"].replace("_", " ")
+    item["why"] = (f"Measured {sign}{abs(delta) * 100:.1f}% win rate vs this brawler's other "
+                   f"{kind}s (single-item owners, n≈{cell.get('n_eff', 0):.0f})")
+
+
+def _advise_accessory(acc: R.Accessory, mode: str, brawler_id: int, itemstats: Optional[dict]) -> dict:
     effect = _classify(acc.description)
     label, blurb = _EFFECT_META[effect]
-    return {
+    item = {
         "id": acc.id,
         "name": acc.name,
         "kind": acc.kind,
@@ -128,43 +148,61 @@ def _advise_accessory(acc: R.Accessory, mode: str) -> dict:
         "why": f"{label}: {blurb}.",
         "source": "heuristic",
     }
+    cell = IS.accessory_cell(itemstats, brawler_id, acc.id)
+    if cell and cell.get("significant"):
+        _apply_measured(item, cell)
+    return item
 
 
 def _mark_best(items: List[dict], mode: str) -> None:
-    """Flag the single best-fit item of a kind, and enrich its reasoning with the mode."""
+    """Flag the single best item of a kind. Prefers a MEASURED item that is measured *better* than
+    the brawler's other items of the type (positive delta, i.e. fit > 0.5) — a measured edge beats an
+    effect guess. A lone measured item that's measured *worse* must NOT be recommended, so when no
+    positive-measured item exists we fall back to the best fit over all items (which lets a stronger
+    heuristic sibling win over a negative-measured one)."""
     if not items:
         return
-    best = max(items, key=lambda it: it["fit"])
+    measured_better = [it for it in items if it["source"] == "winrate" and it["fit"] > 0.5]
+    best = max(measured_better or items, key=lambda it: it["fit"])
     best["recommended"] = True
-    best["why"] = f"Best {best['kind'].replace('_', ' ')} fit for {mode} — {best['why'][0].lower()}{best['why'][1:]}"
+    if best["source"] == "winrate":
+        best["why"] = "Top measured pick — " + best["why"][0].lower() + best["why"][1:]
+    else:
+        best["why"] = f"Best {best['kind'].replace('_', ' ')} fit for {mode} — {best['why'][0].lower()}{best['why'][1:]}"
 
 
-def _gear_items(cls: str, mode: str, top: int = 2) -> List[dict]:
+def _gear_items(cls: str, mode: str, brawler_id: int, itemstats: Optional[dict], top: int = 2) -> List[dict]:
     guide = _gear_guide()
-    scored = []
+    out: List[dict] = []
     for g in guide["gears"]:
         base = float(g.get("base", 0.4))
-        fit = base + float(g.get("modes", {}).get(mode, 0.0)) + float(g.get("roles", {}).get(cls, 0.0))
-        fit = max(0.0, min(1.0, fit))
-        scored.append((fit, g))
-    scored.sort(key=lambda t: t[0], reverse=True)
-    out: List[dict] = []
-    for rank, (fit, g) in enumerate(scored):
-        recommended = rank < top
-        why = g.get("effect", "")
-        why = (f"Core pick for {mode}" if recommended else "Situational") + (f" — {why.lower()}." if why else ".")
-        out.append({
+        fit = max(0.0, min(1.0, base + float(g.get("modes", {}).get(mode, 0.0))
+                           + float(g.get("roles", {}).get(cls, 0.0))))
+        name = g.get("name", "")
+        item = {
             "id": None,
-            "name": g.get("name", ""),
+            "name": name,
             "kind": "gear",
             "image_url": "",
             "effect": g.get("effect", ""),
             "description": g.get("description", ""),
             "fit": round(fit, 3),
-            "recommended": recommended,
-            "why": why,
+            "recommended": False,
+            "why": (f"Situational — {g.get('effect','').lower()}." if g.get("effect") else "Situational."),
             "source": "curated",
-        })
+        }
+        cell = IS.gear_cell(itemstats, brawler_id, name)
+        if cell and cell.get("significant"):
+            _apply_measured(item, cell)
+        out.append(item)
+    # Rank by final fit (measured deltas fold onto the same 0..1 scale); flag the top two as picks.
+    out.sort(key=lambda it: it["fit"], reverse=True)
+    for rank, item in enumerate(out):
+        if rank < top:
+            item["recommended"] = True
+            if item["source"] != "winrate":
+                item["why"] = (f"Core pick for {mode}" +
+                               (f" — {item['effect'].lower()}." if item["effect"] else "."))
     return out
 
 
@@ -176,12 +214,15 @@ def loadout_advice(brawler_id: int, mode: str, map_id: Optional[int] = None) -> 
     b = _by_id().get(brawler_id)
     if b is None:
         return None
-    gadgets = [_advise_accessory(a, mode) for a in b.gadgets]
-    star_powers = [_advise_accessory(a, mode) for a in b.star_powers]
+    itemstats = IS.get_itemstats()   # None until the table is built/synced -> pure heuristic
+    gadgets = [_advise_accessory(a, mode, b.id, itemstats) for a in b.gadgets]
+    star_powers = [_advise_accessory(a, mode, b.id, itemstats) for a in b.star_powers]
     _mark_best(gadgets, mode)
     _mark_best(star_powers, mode)
-    gears = _gear_items(b.cls, mode)
-    note = f"Effect-based fit for {mode} — not a live tier read yet."
+    gears = _gear_items(b.cls, mode, b.id, itemstats)
+    measured = any(it["source"] == "winrate" for it in gadgets + star_powers + gears)
+    note = ("Measured win rates where the sample is sufficient; effect-based fit otherwise."
+            if measured else f"Effect-based fit for {mode} — not a live tier read yet.")
     return {
         "brawler_id": b.id,
         "brawler_name": b.name,

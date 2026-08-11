@@ -43,6 +43,10 @@ META_REPORT_PATH = PROCESSED_DIR / "meta_report.json"
 _META_ETAG_PATH = PROCESSED_DIR / ".meta_report.etag"
 _META_SHA_PATH = PROCESSED_DIR / ".meta_report.sha"
 
+ITEMSTATS_PATH = PROCESSED_DIR / "itemstats.json"
+_ITEMSTATS_ETAG_PATH = PROCESSED_DIR / ".itemstats.etag"
+_ITEMSTATS_SHA_PATH = PROCESSED_DIR / ".itemstats.sha"
+
 
 def _read(path: Path) -> str:
     try:
@@ -153,3 +157,11 @@ def sync_meta_report(url: str, timeout: float = 60.0) -> bool:
     twice per data change, which takes minutes on a small cloud CPU (see
     :mod:`bsdraft.engine.drift`)."""
     return _sync_file(url, META_REPORT_PATH, _META_ETAG_PATH, _META_SHA_PATH, timeout, "meta report")
+
+
+def sync_itemstats(url: str, timeout: float = 60.0) -> bool:
+    """Refresh the precomputed per-item win-rate table (itemstats.json.gz Release asset) from
+    ``url``. Returns True iff it changed. Built off-box from the matches x ownership-profiles join
+    (needs the profiles, which only the home machine collects); the API just LOADS the small table
+    so /api/loadout can serve measured picks with no in-memory join."""
+    return _sync_file(url, ITEMSTATS_PATH, _ITEMSTATS_ETAG_PATH, _ITEMSTATS_SHA_PATH, timeout, "itemstats")
