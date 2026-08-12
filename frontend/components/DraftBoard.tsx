@@ -513,7 +513,6 @@ export default function DraftBoard() {
   const [railOk, setRailOk] = useState(true);
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [query, setQuery] = useState("");
-  const [useSearch, setUseSearch] = useState(false);
   const [mySeat, setMySeat] = useState<number | null>(null); // which "our" slot is the user (in pick order)
   const [hoverSlot, setHoverSlot] = useState<{ zone: Zone; index: number; rect: SlotRect } | null>(null); // drafted slot under the cursor
   const [loadouts, setLoadouts] = useState<Record<string, LoadoutResponse | "loading">>({}); // cache: `${bid}:${mode}`
@@ -690,7 +689,7 @@ export default function DraftBoard() {
       their_team: blindPick ? [] : their.filter((x): x is number => x != null),
       bans: bans.filter((x): x is number => x != null),
       we_pick_first: wePickFirst, solo_queue: solo, phase,
-      use_search: blindPick ? false : useSearch, personalize: myTurn,
+      personalize: myTurn,
       personal_tag: myTurn ? personalTag : null,
       roster: myTurn ? roster?.owned ?? null : null,
       rank_bracket: bracket, top: 12,
@@ -703,7 +702,7 @@ export default function DraftBoard() {
         .finally(() => setLoading(false));
     }, 120);
     return () => clearTimeout(t);
-  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, useSearch, myTurn, roster, bracket, personalTag, blindPick]);
+  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, myTurn, roster, bracket, personalTag, blindPick]);
 
   useEffect(() => {
     if (!mapId || !mode) return;
@@ -881,13 +880,6 @@ export default function DraftBoard() {
           style={cssVars({ "--seg-c": "var(--line-strong)" })}>
           {solo ? "SOLO Q" : "PREMADE"}
         </button>
-        {!blindPick && (
-          <button onClick={() => setUseSearch((v) => !v)} data-on={useSearch ? "true" : "false"}
-            className="seg px-2.5 py-1.5" style={cssVars({ "--seg-c": "var(--green)" })}
-            title="Seat-aware minimax lookahead over the remaining snake">
-            ⟲ DEEP SEARCH {useSearch ? "ON" : "OFF"}
-          </button>
-        )}
         <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-3">
           {health != null && (
             <span className="mono text-[11px] flex items-center gap-1.5 tabular-nums"
@@ -1102,8 +1094,8 @@ function TheCall({ kind, r, b, accent, onPlace }: {
   const pr = r as PickRec, br = r as BanRec;
   // Shown instantly (no count-up): under a 20s clock the headline number must read true on the
   // first glance — an animated ramp from 0 briefly shows a misleadingly low value.
-  const score = isBan ? br.threat : (pr.projected_winprob ?? pr.score);
-  const scoreLabel = isBan ? "THREAT" : (pr.projected_winprob != null ? "PROJ WIN" : "SCORE");
+  const score = isBan ? br.threat : pr.score;
+  const scoreLabel = isBan ? "THREAT" : "SCORE";
   const col = isBan ? "var(--red)" : scoreColor(score);
   const reason = isBan ? banReason(br) : pickReason(pr);
   const cls = b?.cls || pr.cls;
@@ -1166,8 +1158,7 @@ function TheCall({ kind, r, b, accent, onPlace }: {
 }
 
 function RankedPick({ r, i, b, onClick }: { r: PickRec; i: number; b?: Brawler; onClick: () => void }) {
-  const lookahead = r.projected_winprob != null;
-  const score = lookahead ? (r.projected_winprob as number) : r.score;
+  const score = r.score;
   const sig = pickSignals(r).sort((a, b2) => Math.abs(b2.v - 0.5) - Math.abs(a.v - 0.5)).slice(0, 3);
   return (
     <button onClick={onClick} className="card-rec flex items-center gap-2.5 w-full text-left px-3 py-2 border-t border-[var(--line)]"
@@ -1178,7 +1169,6 @@ function RankedPick({ r, i, b, onClick }: { r: PickRec; i: number; b?: Brawler; 
         <div className="flex items-baseline gap-2">
           <span className="font-semibold text-[13px] truncate">{r.name}</span>
           <span className="mono text-[9px] tracking-[0.08em] shrink-0" style={{ color: CLASS_COLOR[r.cls] || "#aaa" }}>{CLASS_SHORT[r.cls] || r.cls}</span>
-          {lookahead && <span className="mono text-[8px] text-[var(--dim)] shrink-0">⟲</span>}
         </div>
         <SigLine sig={sig} />
       </div>

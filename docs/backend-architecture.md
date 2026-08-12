@@ -49,8 +49,9 @@ engine fuses the model with empirical stats built at startup from the same match
    mastery/personal need a roster), renormalized by the active weights. `DEFAULT_WEIGHTS`
    were tuned via the held-out ablation (see the comment there and
    [model-evaluation.md](model-evaluation.md)) — context-dependent per-map weighting was
-   tested and found no better, so weights are global. `engine/search.py` adds the seat-aware
-   top-K-pruned, memoized minimax over the 1-2-2-1 snake.
+   tested and found no better, so weights are global. The model signal scores the draft
+   board as it stands: the net is trained on masked comps, so partial teams are first-class
+   inputs (`supports_partial`), with a legacy top-meta completion fallback for old artifacts.
 
 ## The two recommend endpoints are intentionally distinct
 

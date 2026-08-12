@@ -12,6 +12,7 @@ from functools import lru_cache
 from statistics import mean
 from typing import Dict, List, Optional
 
+from bsdraft.constants import TEAM_SIZE
 from bsdraft.data import reference as R
 from bsdraft.engine.state import DraftState
 
@@ -98,10 +99,21 @@ def role_fit(state: DraftState, cls: str) -> float:
 
 
 def model_marginal(state: DraftState, candidate: int, model, stats) -> Optional[float]:
-    """Full-comp win-prob with `candidate` on our side, completing both teams with the
-    map's top empirical picks. Same completion across candidates, so it ranks fairly."""
+    """Win-prob of the draft so far with `candidate` added to our side.
+
+    Partial-draft models (``supports_partial``) score the unfinished board directly — they
+    were trained on masked comps, so unknown slots marginalize over how real drafts
+    continued. Legacy artifacts can only judge full 3v3s, so both teams are completed with
+    the map's top empirical picks; the same completion across candidates ranks fairly."""
     if model is None or not getattr(model, "available", False):
         return None
+    if getattr(model, "supports_partial", False):
+        # Cap both sides at team size: the frontend requests recommendations even when our
+        # side is already full (e.g. the enemy's last pick is pending, or the draft is done),
+        # where the candidate can't actually join — every candidate then scores the same
+        # finished board, exactly as the legacy completion's [:size] truncation behaved.
+        our = (state.our_team + [candidate])[:TEAM_SIZE]
+        return model.prob(our, state.their_team[:TEAM_SIZE], state.map_id, state.mode)
     exclude = state.picked_or_banned()
     pool = [bid for bid, _ in stats.top_brawlers(state.map_id, n=40, min_games=3)]
     our = _complete_team(state.our_team + [candidate], pool, 3, exclude | {candidate})

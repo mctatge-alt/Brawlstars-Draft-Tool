@@ -10,6 +10,12 @@ embedding + ctx (Linear -> ReLU -> [Dropout, a no-op at eval] -> Linear); and P/
 low-rank counter embeddings. Training still uses PyTorch (``scripts/train.py``); only
 inference is reimplemented here so the deployed API needs neither torch nor the training deps.
 
+Partial drafts: artifacts trained with masked drafts carry a ``mask_row`` in their config —
+a trained "unknown slot" embedding row. When present (``supports_partial``), teams with
+fewer than 3 picks are padded with that row and scored directly; the prediction
+marginalizes over how real drafts continued from such boards. Legacy artifacts reject
+partial teams (callers gate on ``supports_partial`` and fall back to team completion).
+
 Degrades gracefully in two ways:
 
   * if no export exists yet, ``available`` is False and ``prob`` returns 0.5, so the engine can
@@ -30,7 +36,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-from bsdraft.constants import MODE_CAMEL_TO_DISPLAY, PROCESSED_DIR
+from bsdraft.constants import MODE_CAMEL_TO_DISPLAY, PROCESSED_DIR, TEAM_SIZE
 from bsdraft.data import encoders as E
 
 DEFAULT_PATH = PROCESSED_DIR / "winprob.npz"
@@ -94,7 +100,10 @@ class WinProbModel:
             if m is None:
                 continue
             self._vocab[key] = m.shape[0]
-            w[key] = np.vstack([m, m.mean(axis=0, keepdims=True)])
+            base = m
+            if key in _BRAWLER_MATRICES and self.supports_partial:
+                base = m[: int(self.cfg["mask_row"])]   # the mask row is not a real brawler
+            w[key] = np.vstack([m, base.mean(axis=0, keepdims=True)])
 
     def _brawler_row(self, brawler_id: int) -> int:
         """Trained row for a brawler id. An id the export predates returns a sentinel past the
@@ -135,8 +144,28 @@ class WinProbModel:
     def available(self) -> bool:
         return self._w is not None
 
+    @property
+    def supports_partial(self) -> bool:
+        """True when the artifact carries a trained "unknown slot" row, so ``prob`` /
+        ``prob_batch`` accept teams with fewer than 3 picks. Legacy exports don't."""
+        return bool(self.cfg) and self.cfg.get("mask_row") is not None
+
+    def _team_rows(self, team: Sequence[int]) -> List[int]:
+        """Embedding rows for one team, padding missing slots with the mask row."""
+        if len(team) > TEAM_SIZE:
+            raise ValueError(f"team has {len(team)} brawlers; draft teams hold at most {TEAM_SIZE}")
+        rows = [self._brawler_row(x) for x in team]
+        if len(rows) < TEAM_SIZE:
+            if not self.supports_partial:
+                raise ValueError(
+                    f"{self.path.name} predates partial-draft support: pass full "
+                    f"{TEAM_SIZE}-brawler teams, or check supports_partial before calling")
+            rows += [int(self.cfg["mask_row"])] * (TEAM_SIZE - len(rows))
+        return rows
+
     def prob(self, team_a_ids: Sequence[int], team_b_ids: Sequence[int], map_id: int, mode: str) -> float:
-        """P(team_a beats team_b) for full 3-brawler teams (brawler ids)."""
+        """P(team_a beats team_b). Teams are 0-3 brawler ids; short teams need a
+        partial-draft artifact (``supports_partial``) and score the board as it stands."""
         if not self.available:
             return 0.5
         return self.prob_batch([list(team_a_ids)], [list(team_b_ids)], map_id, mode)[0]
@@ -155,9 +184,10 @@ class WinProbModel:
         # Rows come from the export's pinned vocabulary when it has one (exact, immune to catalog
         # reordering); otherwise from the live positional encoders. _safe() then steers any id the
         # export has no row for to the appended mean embedding instead of raising IndexError.
-        a = self._safe(np.array([[self._brawler_row(x) for x in t] for t in teams_a]),
+        # (The mask row pads short teams first and is a trained row, in range by construction.)
+        a = self._safe(np.array([self._team_rows(t) for t in teams_a]),
                        "brawler.weight")                                   # (N, 3)
-        b = self._safe(np.array([[self._brawler_row(x) for x in t] for t in teams_b]),
+        b = self._safe(np.array([self._team_rows(t) for t in teams_b]),
                        "brawler.weight")                                   # (N, 3)
 
         # ctx = concat(map_emb, mode_emb), broadcast across the batch

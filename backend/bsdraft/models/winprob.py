@@ -9,10 +9,17 @@ where ctx = [map_emb, mode_emb]; S is a shared MLP over the mean brawler embeddi
 and P/Q are low-rank "attacker/defender" embeddings whose dot products encode directed
 matchups. Swapping A and B negates the logit, so P(A wins) + P(B wins) = 1 by
 construction — no team-order bias and no global offset to learn.
+
+Partial drafts: when ``mask_row`` is set, every brawler-indexed matrix carries one extra
+learned row — the "unknown slot". Training masks slots down to realistic draft states, so
+at inference an unfinished board is scored directly: unknown slots marginalize over how
+real drafts continued. Antisymmetry is unaffected (mask-vs-mask counter terms cancel
+exactly), so an empty board predicts exactly 0.5.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -29,6 +36,9 @@ class ModelConfig:
     d_hidden: int = 64
     counter_rank: int = 16
     dropout: float = 0.1
+    # Row index of the trained "unknown slot" embedding (= num_brawlers), or None for a
+    # legacy full-comp-only model. Serialized into the export so serving can detect support.
+    mask_row: Optional[int] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -38,7 +48,14 @@ class WinProbNet(nn.Module):
     def __init__(self, cfg: ModelConfig):
         super().__init__()
         self.cfg = cfg
-        self.brawler = nn.Embedding(cfg.num_brawlers, cfg.d_brawler)
+        # One extra row past the real brawlers holds the "unknown slot" embedding. Its only
+        # coherent position is num_brawlers — serving's OOV fallback treats rows [0:mask_row]
+        # as "all real brawlers" — so enforce that rather than half-support other values.
+        if cfg.mask_row is not None and cfg.mask_row != cfg.num_brawlers:
+            raise ValueError(
+                f"mask_row must equal num_brawlers ({cfg.num_brawlers}), got {cfg.mask_row}")
+        rows = cfg.num_brawlers + (1 if cfg.mask_row is not None else 0)
+        self.brawler = nn.Embedding(rows, cfg.d_brawler)
         self.map_emb = nn.Embedding(cfg.num_maps, cfg.d_map)
         self.mode_emb = nn.Embedding(cfg.num_modes, cfg.d_mode)
         self.strength = nn.Sequential(
@@ -48,8 +65,8 @@ class WinProbNet(nn.Module):
             nn.Linear(cfg.d_hidden, 1),
         )
         # low-rank counter embeddings (attacker P, defender Q)
-        self.counter_p = nn.Embedding(cfg.num_brawlers, cfg.counter_rank)
-        self.counter_q = nn.Embedding(cfg.num_brawlers, cfg.counter_rank)
+        self.counter_p = nn.Embedding(rows, cfg.counter_rank)
+        self.counter_q = nn.Embedding(rows, cfg.counter_rank)
         self._init_weights()
 
     def _init_weights(self) -> None:

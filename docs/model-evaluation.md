@@ -146,6 +146,16 @@ negligible cost (.0002 AUC vs the best syn-0 candidate).
 - **These weights chase the model's quality.** The 69/31 → 22/78 flip shows the optimal blend
   moves with the net's training set. Re-run the suite after major dataset growth or an
   architecture change; the sweep exists so that check is one command.
+- **Masked-model note (2026-08-12).** The shipped net is now trained on masked partial drafts
+  (see [MODEL_CARD.md](MODEL_CARD.md)), and the engine feeds it the live board directly instead
+  of completing teams with top-meta picks. This suite evaluates all signals at *full comps*
+  (match-level labels are all that exist), so its weight calibration point is unchanged, and the
+  retrain was gated by a paired full-comp comparison against the previous checkpoint. What did
+  change is the model signal's mid-draft behavior: it now reads closer to 0.5 early (honest
+  marginal) instead of the wider completion-based spread the weights were originally swept
+  against. That can't be validated here for the usual reason (no pick-level labels) — but note
+  the ablation scripts train their own *unmasked* nets internally, so their net-vs-empirical
+  comparison remains apples-to-apples across reruns.
 
 ## Reproduce
 

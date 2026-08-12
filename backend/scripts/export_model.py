@@ -47,7 +47,38 @@ def _vocab() -> dict:
 def export(pt_path: Path, npz_path: Path) -> None:
     ckpt = torch.load(pt_path, map_location="cpu", weights_only=True)
     weights = {k: v.detach().cpu().numpy() for k, v in ckpt["state_dict"].items()}
-    np.savez(npz_path, _config=np.array(json.dumps(ckpt["config"])), **weights, **_vocab())
+    vocab = _vocab()
+    # The vocab is pinned from the LIVE reference, but the checkpoint was trained against the
+    # reference as of training time. If the catalog changed in between, the pinned ids would
+    # silently address wrong rows — and with a mask row, a new brawler would pin exactly ONTO
+    # the "unknown slot" row (in range, so no serving guard can catch it). Fail loudly instead:
+    # retrain and export against the same snapshot.
+    cfg = ckpt["config"]
+    trained_vocab = ckpt.get("vocab")
+    if trained_vocab is not None:
+        # Checkpoints carry the exact trained id-by-row lists: compare identity, so even a
+        # same-size swap (which count checks can't see) is caught.
+        for what, live, trained in (
+            ("brawler ids", vocab["_vocab_brawler_ids"].tolist(), trained_vocab["brawler_ids"]),
+            ("map ids", vocab["_vocab_map_ids"].tolist(), trained_vocab["map_ids"]),
+            ("modes", vocab["_vocab_modes"].tolist(), trained_vocab["modes"]),
+        ):
+            if list(live) != list(trained):
+                raise SystemExit(
+                    f"reference catalog changed since training ({what} differ) — rerun "
+                    f"scripts/train.py against the current reference, then export")
+    else:
+        # Older checkpoint without pinned ids: counts are the best available check.
+        for what, live, trained in (
+            ("brawlers", len(vocab["_vocab_brawler_ids"]), cfg["num_brawlers"]),
+            ("maps", len(vocab["_vocab_map_ids"]) + 1, cfg["num_maps"]),   # +1: unknown bucket
+            ("modes", len(vocab["_vocab_modes"]) + 1, cfg["num_modes"]),
+        ):
+            if live != trained:
+                raise SystemExit(
+                    f"reference catalog changed since training ({what}: live {live} != trained "
+                    f"{trained}) — rerun scripts/train.py against the current reference, then export")
+    np.savez(npz_path, _config=np.array(json.dumps(cfg)), **weights, **vocab)
     size_kb = npz_path.stat().st_size / 1024
     print(f"exported {pt_path}  ->  {npz_path}  ({size_kb:.1f} KB, {len(weights)} tensors "
           f"+ pinned vocabulary)")

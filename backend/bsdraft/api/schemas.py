@@ -34,7 +34,6 @@ class RecommendRequest(BaseModel):
     solo_queue: bool = True
     rank_bracket: Optional[str] = None   # condition stats on this rank bracket, e.g. "Masters"
     phase: str = "pick"          # "pick" | "ban"
-    use_search: bool = False     # seat-aware minimax lookahead
     personalize: bool = False    # weight by the player's roster / mastery
     personal_tag: Optional[str] = None   # fold in this player's own win rates (resolved from data)
     # The player's roster (owned brawlers + mastery + loadout gaps), sent by the client so the
@@ -55,7 +54,6 @@ class PickRec(BaseModel):
     role_fit: float
     win_prob: Optional[float] = None
     confidence: float
-    projected_winprob: Optional[float] = None  # set when seat-aware search is used
     mastery: Optional[float] = None
     personal_winrate: Optional[float] = None   # this player's own win rate with the brawler
     personal_games: Optional[float] = None      # their effective (recency-weighted) sample

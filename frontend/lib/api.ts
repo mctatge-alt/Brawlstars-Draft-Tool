@@ -7,7 +7,7 @@ export type Reference = { brawlers: Brawler[]; maps: GameMap[]; modes: string[];
 export type PickRec = {
   brawler_id: number; name: string; cls: string; score: number; map_winrate: number;
   synergy: number | null; counter: number | null; role_fit: number;
-  win_prob: number | null; confidence: number; projected_winprob: number | null;
+  win_prob: number | null; confidence: number;
   mastery: number | null; personal_winrate: number | null; personal_games: number | null;
   owned: boolean; gaps: string[];
   breakdown: Record<string, number>;
@@ -83,7 +83,7 @@ export type TopPicksResponse = {
 export type RecommendBody = {
   map_id: number; mode: string; our_team: number[]; their_team: number[]; bans: number[];
   we_pick_first: boolean; solo_queue: boolean; rank_bracket?: string | null; phase: "pick" | "ban";
-  use_search: boolean; personalize: boolean; personal_tag?: string | null; top: number;
+  personalize: boolean; personal_tag?: string | null; top: number;
   // The player's owned brawlers + mastery + loadout gaps, sent so the public backend (which can't
   // fetch the roster itself — IP-locked out of Supercell) can personalize the suggestions.
   roster?: OwnedBrawler[] | null;

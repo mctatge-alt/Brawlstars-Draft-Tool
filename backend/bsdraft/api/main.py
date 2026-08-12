@@ -31,7 +31,6 @@ from bsdraft.engine.drift import detect_drift, load_report
 from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.loadout import loadout_advice
 from bsdraft.engine.personal import build_personal_stats, matches_from_battlelog
-from bsdraft.engine.scoring import score_candidate
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.playerrank import build_rank_index, current_ranked_tier
 from bsdraft.engine.rank_store import RankIndex, load_rank_index
@@ -485,17 +484,8 @@ def recommend(req: S.RecommendRequest):
     # pay for it during the ban phase (the result would be discarded there) — that scan, fired on
     # every ban placement, was the bulk of the blind-pick "analyzing…" stall before the first pick.
     personal = _personal_for(req.personal_tag)
-    can_search = req.use_search and _engine.model and _engine.model.available and state.our_slots_left > 0
-    if can_search:
-        picks = []
-        for sr in _engine.search_recommend(state, top=req.top, roster=roster):
-            scored = vars(score_candidate(state, sr.brawler_id, _engine._stats_for(state),
-                                          _engine.model, roster=roster, personal=personal))
-            scored["projected_winprob"] = sr.projected_winprob
-            picks.append(S.PickRec(**scored))
-    else:
-        picks = [S.PickRec(**vars(p))
-                 for p in _engine.recommend_picks(state, top=req.top, roster=roster, personal=personal)]
+    picks = [S.PickRec(**vars(p))
+             for p in _engine.recommend_picks(state, top=req.top, roster=roster, personal=personal)]
 
     return S.RecommendResponse(
         phase="pick", picks=picks,

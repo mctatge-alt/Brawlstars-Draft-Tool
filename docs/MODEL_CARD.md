@@ -1,8 +1,10 @@
 # Model Card — Brawl Stars Win-Probability Model
 
 A compact neural model that predicts the probability that team A beats team B in a Brawl
-Stars *Ranked* 3v3 match, given both teams' brawlers and the map. It is the core signal
-behind the draft assistant's pick/ban recommendations.
+Stars *Ranked* 3v3 match, given the map and **any known subset of each team's brawlers** —
+from an empty board to a completed 3v3. It is the core signal behind the draft assistant's
+pick/ban recommendations, and it scores half-drafted boards natively: unknown slots are a
+trained input, not a gap to fill.
 
 > **See also:** [model-evaluation.md](model-evaluation.md) — how this model is weighted
 > against the empirical signals in the pick blend, and an ablation testing whether that
@@ -10,8 +12,8 @@ behind the draft assistant's pick/ban recommendations.
 
 ## Intended use
 
-- **Primary:** rank candidate picks/bans by their marginal effect on win-probability during a
-  live ranked draft, and power the seat-aware lookahead search.
+- **Primary:** rank candidate picks by their marginal effect on win-probability during a
+  live ranked draft, scoring the board exactly as it stands (partial teams included).
 - **Not intended for:** predicting individual match outcomes with high confidence, betting, or
   any use that assumes the draft alone determines the result (it does not — see Limitations).
 
@@ -24,16 +26,19 @@ behind the draft assistant's pick/ban recommendations.
   harvests the other five player tags from every ranked match to expand the frontier. Matches
   are deduped by a stable key (`battleTime` + sorted player tags), since one match appears in
   up to six players' logs.
-- **Size:** ~30,200 unique ranked matches (~30,000 labeled after dropping draws). Each row is
-  `(map, mode, team A brawlers[3], team B brawlers[3]) → winner`, plus per-brawler power level,
-  trophies, and the queue type (`soloRanked`/`teamRanked`).
+- **Size:** ~1.06M labeled unique ranked matches (1,059,778 at the current retrain). Each row
+  is `(map, mode, team A brawlers[3], team B brawlers[3]) → winner`, plus per-brawler power
+  level, trophies, and the queue type (`soloRanked`/`teamRanked`).
 - **Population & bias:** seeded from top-ladder players, so the data reflects high-skill
-  ranked play. Team-A win-rate is ~0.50 (no positional label bias). The active map pool is
-  whatever is in the current ranked rotation (~26 maps at time of collection).
+  ranked play. Team-A win-rate is ~0.51 (no material positional label bias). The map pool is
+  whatever has been in ranked rotation while collecting (35 distinct maps in the current set).
 
 ## Inputs / features
 
-- `team_a`, `team_b`: three brawler indices each (105 brawlers, contiguous embedding index).
+- `team_a`, `team_b`: up to three brawler indices each (contiguous embedding index over the
+  full catalog). Slots not yet drafted are filled with a dedicated **mask row** — a learned
+  "unknown slot" embedding sitting one index past the real brawlers (`mask_row` in the
+  exported config). Artifacts without a mask row (legacy exports) accept full 3v3s only.
 - `map`: index over the ranked-map pool (+ an unknown bucket).
 - `mode`: one of the six current ranked modes (+ unknown).
 
@@ -84,6 +89,14 @@ to learn) and makes team-swap data augmentation unnecessary. The bilinear pairin
 $P_A \cdot Q_B - P_B \cdot Q_A$ encodes **directed** matchups (X beats Y) that an additive strength
 model cannot express, while keeping the whole head sign-flipping.
 
+**Unknown slots.** Every brawler-indexed matrix ($E$, $p$, $q$) carries one extra learned row,
+$e_{\varnothing}$ / $p_{\varnothing}$ / $q_{\varnothing}$, used for undrafted slots. Antisymmetry
+survives masking: mask-vs-mask counter contributions cancel exactly in the difference (the
+$(3-k_A)(3-k_B)\,(p_{\varnothing} \cdot q_{\varnothing})$ terms appear identically on both sides),
+so an all-unknown board predicts exactly $0.5$. On full comps no mask row is present, so these
+parameters are inert at inference — though training on masked states does shape the *shared*
+embeddings and MLP, which is why retrains are gated by a paired full-comp comparison (below).
+
 ## Training
 
 The objective is **recency-weighted binary cross-entropy** on the win label $y_i \in \{0, 1\}$ ($1$
@@ -101,40 +114,88 @@ $$
 with a configurable half-life $\tau$ (default $\approx 30$ days, so a game from a month ago carries
 about half the weight of a fresh one; the weights are normalized to mean $1$).
 
+- **Masked drafts.** Each epoch, every match is re-masked: with probability `--p-full` it keeps
+  its full 3v3; otherwise a draft state $(k_A, k_B)$ of known picks is drawn uniformly from the
+  14 non-trivial states in $\{0..3\}^2$ (excluding the full board and the zero-gradient empty
+  board) and a uniformly random subset of each team beyond $k$ known picks is replaced by the
+  mask row. Fresh masks per epoch act as free augmentation. The label is unchanged — the model
+  learns $\Pr(\text{win} \mid \text{these picks are on the final teams})$.
 - **Recency weighting** uses the same exponential time-decay as the empirical stats table, so the
   model and the stats both lean on recent matches; pass a non-positive half-life to disable it
   (uniform weights) for backtests.
 - **Split:** random 85/15 train/val (seeded). Optimizer AdamW, weight decay 1e-4, early
-  stopping on validation log-loss.
-- **Baselines:** (a) constant 0.5, (b) logistic regression on signed brawler-presence features.
+  stopping on a fixed masked copy of the val split (same mixture as training, so full-comp
+  regressions still move it); headline metrics are reported unmasked for comparability.
+- **Baselines:** (a) constant 0.5, (b) logistic regression on signed brawler-presence features,
+  (c) **paired**: the previous checkpoint evaluated on the same val rows — the only comparison
+  free of data drift, and the no-regression gate for every retrain. The 1v0 state is also
+  checked against a shrunk brawler-map winrate marginal (the cheapest single-pick predictor);
+  the net must at least match it or the masking design is washing out low-information states.
 
 ## Evaluation
 
-Held-out validation (~4.5k matches):
+Held-out validation (158,966 of 1,059,778 matches), full comps:
 
 | Model | Log-loss ↓ | Accuracy ↑ | AUC ↑ | ECE ↓ |
 | --- | --- | --- | --- | --- |
 | Always 0.5 | 0.6931 | 0.500 | – | – |
-| Logistic regression | 0.6879 | 0.541 | 0.557 | – |
-| **Embedding net** | **0.6846** | **0.549** | **0.576** | **0.012** |
+| Logistic regression | 0.6852 | 0.550 | 0.570 | – |
+| Previous (unmasked) checkpoint, same val rows | 0.6671 | 0.588 | 0.626 | 0.009 |
+| **Embedding net (masked, `--p-full 0.7`)** | **0.6674** | **0.588** | **0.625** | **0.009** |
 
-- Beats both baselines on every metric.
-- **Calibration is the headline:** ECE 0.012 means the predicted probabilities are
+- Beats both baselines; the paired full-comp delta vs the unmasked control is
+  +0.0003 log-loss / −0.0009 AUC — the price of partial-draft support, held to parity by the
+  70/30 full/masked training mixture (a 50/50 mixture cost +0.0010 with no partial-state
+  gain). Retrains enforce this as a hard gate: `train.py --max-full-delta` (default 0.002)
+  aborts without writing artifacts, so the unattended auto-retrain path can't publish or
+  baseline a regressed model.
+- **Partial draft states** (whole val split masked to each state; `mean |p−0.5|` is the
+  average edge the model claims):
+
+  | State (known ours v theirs) | Log-loss ↓ | AUC ↑ | ECE ↓ | mean \|p−0.5\| |
+  | --- | --- | --- | --- | --- |
+  | 1v0 | 0.6908 | 0.538 | 0.010 | 0.029 |
+  | 1v1 | 0.6870 | 0.561 | 0.010 | 0.044 |
+  | 2v1 | 0.6839 | 0.576 | 0.010 | 0.058 |
+  | 2v2 | 0.6781 | 0.595 | 0.010 | 0.070 |
+  | 3v2 | 0.6742 | 0.608 | 0.013 | 0.082 |
+  | 3v3 | 0.6674 | 0.625 | 0.009 | 0.093 |
+
+  Information about the rest of the draft is worth a steady log-loss improvement at every
+  step, and calibration holds near 0.01 across all states. At the lowest-information state
+  (1v0) the net sits at parity with a shrunk brawler-map winrate marginal (0.6908 vs 0.6905) —
+  it adds nothing beyond the raw statistic there, which the blend already carries as the
+  `map` signal, but it is not washed out either.
+- **Calibration is the headline:** ECE ≈ 0.009 means the predicted probabilities are
   trustworthy — when it says 60%, the team wins ~60% of the time. For an assistant that
   *consumes* probabilities, calibration matters more than raw accuracy.
-- Charts: see [`docs/training.png`](training.png) (validation curve + reliability diagram).
+- Charts: see [`docs/training.png`](training.png) (validation curves for the masked mixture
+  and full comps + reliability diagram).
 
 ## Limitations
 
 - **Skill-dominated outcomes.** At top ladder both teams draft well; the *draft* explains only
-  a slice of the result, capping achievable AUC (~0.57 here; comparable open projects on ~1M
-  battles land near ~0.6). The tool therefore uses the model for *relative* pick ranking and
-  fuses it with lower-variance empirical signals — it does not present any single absolute
-  win-probability as gospel.
+  a slice of the result, capping achievable AUC (~0.62 here on ~1M matches). The tool therefore
+  uses the model for *relative* pick ranking and fuses it with lower-variance empirical
+  signals — it does not present any single absolute win-probability as gospel.
+- **Partial-draft probabilities are population averages, not adversarial worst cases.** The
+  number for an unfinished board marginalizes over how real opponents actually continued such
+  drafts. It does not simulate a specific opponent finding the sharpest available counter, so
+  against an opponent stronger than the data average, a pick with a rare-but-devastating answer
+  is overvalued. (The retired minimax search had adversarial *semantics*, but its five-candidate
+  heuristic pruning and uncalibrated min/max over noisy leaf estimates never made that a
+  reliably working feature.)
+- **Seat-blind.** The battle log records final teams, never pick order, so the model cannot
+  condition on who picks next: the same board scores identically whether you or the enemy holds
+  the next pick. Relatedly, training masks a *random subset* of the final team, while at
+  inference the known picks are the *early* picks — early picks are not a perfectly random
+  sample of final teams, a small conditioning mismatch that cannot be measured without pick
+  order.
 - **No ban data.** The API never exposes bans, so the model is trained on final picks; ban
   value is inferred separately from win-rate + contest rate.
 - **Population shift.** Trained on top-ladder solo-queue play; lower brackets and premade
-  coordination differ. A rank-bracket conditioning is on the roadmap.
+  coordination differ. Rank-bracket stat tables mitigate this on the empirical side; the net
+  itself is not bracket-conditioned.
 - **Meta drift.** Brawler strength changes with patches; the model needs periodic retraining on
   fresh data (recency weighting mitigates but does not eliminate this).
 
@@ -166,8 +227,8 @@ $$
 \mathrm{score}(b) = \frac{\sum_{k \in \mathcal{A}} \omega_k\, v_k(b)}{\sum_{k \in \mathcal{A}} \omega_k}.
 $$
 
-That fused score drives the displayed pick ranking. The seat-aware **minimax** search instead uses the
-model as its leaf evaluator and a cheaper heuristic to prune each node to its top-$K$ candidates,
-$h(b) = 0.5\,\mathrm{mw}(b) + 0.25\,\overline{\mathrm{syn}}(b) + 0.25\,\overline{\mathrm{cnt}}(b)$ — see
-the [README](../README.md#how-it-works) for the recursion. Every component is surfaced in the UI, so
-recommendations are explainable rather than a black box.
+That fused score drives the displayed pick ranking. The model signal itself
+(`scoring.model_marginal`) is the net's read of the board as it stands with the candidate added —
+partial teams passed directly when the artifact supports them (`supports_partial`), with a legacy
+fallback that completes both teams with the map's top empirical picks for old artifacts. Every
+component is surfaced in the UI, so recommendations are explainable rather than a black box.

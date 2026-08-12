@@ -1,7 +1,4 @@
-"""Draft engine: ban recommendation, candidate pick recommendation, composition meter.
-
-(Seat-aware snake-draft lookahead and the mastery layer build on this next.)
-"""
+"""Draft engine: ban recommendation, candidate pick recommendation, composition meter."""
 from __future__ import annotations
 
 from collections import Counter
@@ -15,7 +12,6 @@ from bsdraft.engine.state import DraftState
 from bsdraft.engine.stats import DraftStats
 from bsdraft.engine import composition as composition_mod
 from bsdraft.engine import gameplan as gameplan_mod
-from bsdraft.engine.search import SeatAwareSearch
 from bsdraft.models.serve import WinProbModel
 
 
@@ -73,10 +69,6 @@ class DraftEngine:
                   for c in self.candidates(state, roster)]
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:top]
-
-    def search_recommend(self, state: DraftState, top: int = 8, branch: int = 5, roster=None):
-        """Seat-aware recommendation via minimax lookahead over the remaining snake."""
-        return SeatAwareSearch(self, branch=branch).recommend(state, top=top, roster=roster)
 
     def composition_report(self, state: DraftState) -> dict:
         return composition_mod.analyze(state)

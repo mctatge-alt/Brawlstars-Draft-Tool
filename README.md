@@ -1,10 +1,10 @@
 # ⚔️ Brawl Draft — AI Ranked Draft Assistant
 
 An AI-powered draft assistant for **Brawl Stars Ranked**. It recommends bans and picks in
-real time using a win-probability model trained on **30,000+ real ranked matches**, fused
+real time using a win-probability model trained on **1,000,000+ real ranked matches**, fused
 with empirical map statistics — and goes well beyond the usual "win-rate + synergy + counter"
-tools with a **seat-aware minimax lookahead**, **composition warnings**, and **per-player
-roster mastery**.
+tools with a **model that reads unfinished drafts natively**, **composition warnings**, and
+**per-player roster mastery**.
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
@@ -27,8 +27,8 @@ This project keeps that as a *baseline* and adds layers that no single competito
 
 | Layer | What it does |
 | --- | --- |
-| 🎯 **Win-probability model** | Learned brawler + map embeddings predict `P(win)` for any 3v3 vs 3v3 on any map. Calibrated (ECE 0.012). |
-| 🔮 **Seat-aware search** | Minimax lookahead over the 1-2-2-1 snake — reasons about the enemy's best responses, and captures first-pick vs last-pick value. |
+| 🎯 **Win-probability model** | Learned brawler + map embeddings predict `P(win)` for any 3v3 vs 3v3 on any map. Calibrated (ECE ≈ 0.01). |
+| 🔮 **Partial-draft native** | Trained on masked comps, the model scores the board *as it stands* — first pick, mid-snake, or blind pick — marginalizing over how real drafts continued from that position. No fill-in guesses, no separate search pass. |
 | ⚖️ **Composition warnings** | Flags comp holes: no frontline, no long range, double-tank, "enemy is tank-heavy — bring a Marksman," mode-specific advice. |
 | 👤 **Roster mastery** | Personalizes to *your* account: restricts to owned brawlers and weights by power level, comfort (personal trophies), and build completeness — including **buffies**. |
 | 🔍 **Explainability** | Every suggestion shows a transparent per-signal breakdown (map / synergy / counter / role / model / mastery) and a sample-size confidence. |
@@ -38,7 +38,7 @@ This project keeps that as a *baseline* and adds layers that no single competito
 - **Ban + pick phases** with a clickable draft board (6 bans, 3v3, unique picks).
 - **Live recommendations** that re-rank instantly as the draft fills in.
 - **Map-aware**: 100+ maps across the 6 current ranked modes, with per-map stats.
-- **Deep-search toggle** for the seat-aware lookahead; **Personalize toggle** for roster mastery.
+- **Personalize toggle** for roster mastery.
 - **Transparent scoring** — no black box; every number is shown.
 
 ## Architecture
@@ -100,20 +100,19 @@ $$
 \mathcal{A} \subseteq \{\, \text{map},\ \text{model},\ \text{counter},\ \text{synergy},\ \text{role},\ \text{mastery} \,\}
 $$
 
-The **seat-aware search** then runs a depth-limited, top-$K$-pruned, memoized **minimax** over the
-remaining 1-2-2-1 snake: we maximize win-probability, the enemy minimizes it, and completed drafts
-are scored by the model $f_\theta$.
+The model reads **unfinished drafts natively**. During training, every match is also shown with
+random slots hidden behind a learned *unknown-slot* embedding $e_{\varnothing}$, drawn across the
+draft states a real snake produces, so the net learns
 
 $$
-V(A, B) = \begin{cases}
-f_\theta(A, B \mid c) & |A| = |B| = 3 \\
-\max_{b \,\in\, \mathcal{T}_K} V(A \cup \{b\},\ B) & \text{our seat} \\
-\min_{b \,\in\, \mathcal{T}_K} V(A,\ B \cup \{b\}) & \text{enemy seat}
-\end{cases}
+f_\theta(A, B \mid c) \;\approx\; \Pr\bigl(\text{win} \;\bigm|\; A \subseteq A^\*,\ B \subseteq B^\*,\ c\bigr)
 $$
 
-So a pick is valued by its projected win-probability *after the enemy responds optimally*, not by its
-immediate stats alone — and memoizing on $(A, B)$ collapses the snake's many transpositions.
+for any partial board $(A, B)$ — the probability marginalized over how real ranked drafts
+containing those picks actually finished ($A^\*, B^\*$ are the completed teams). Mid-draft, a
+candidate's model signal is therefore its win probability *given everything on the board and
+nothing more*: no top-meta fill-ins, no simulated opponent. Antisymmetry survives masking, so an
+empty board is exactly $0.5$ by construction.
 
 **4. App.** A FastAPI backend serves the engine; a Next.js board calls it and renders live,
 explainable recommendations.
@@ -122,13 +121,18 @@ See [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) for the full methodology, trainin
 
 ## Results
 
-Held-out validation on ~30k matches (lower log-loss/ECE is better; higher AUC/accuracy is better):
+Held-out validation on 158,966 of 1,059,778 matches (lower log-loss/ECE is better; higher
+AUC/accuracy is better), full comps:
 
 | Model | Log-loss | Accuracy | AUC | ECE |
 | --- | --- | --- | --- | --- |
 | Always 0.5 | 0.6931 | 0.500 | – | – |
-| Logistic regression (brawler presence) | 0.6879 | 0.541 | 0.557 | – |
-| **Embedding net** | **0.6846** | **0.549** | **0.576** | **0.012** |
+| Logistic regression (brawler presence) | 0.6852 | 0.550 | 0.570 | – |
+| **Embedding net** | **0.6674** | **0.588** | **0.625** | **0.009** |
+
+And on unfinished boards, the same net's log-loss falls monotonically as picks land —
+0.6908 with one known pick, 0.6781 at 2v2, 0.6674 at the full 3v3 — with calibration
+holding near 0.01 at every state (see `docs/metrics.json`).
 
 The embedding net beats both baselines and is **well-calibrated**. The absolute AUC is modest
 *by nature of the problem*: at top ladder both teams draft competently and the outcome is
@@ -151,7 +155,7 @@ backend/
     collect/     Async crawler: client, snowball, match parser, dedup
     data/        Reference loaders, encoders, dataset builder
     models/      PyTorch win-probability model + serving
-    engine/      Stats, fused scoring, bans, seat-aware search, warnings, mastery
+    engine/      Stats, fused scoring, bans, warnings, mastery
   scripts/       collect.py · train.py · export_model.py · smoke_test.py
 frontend/        Next.js draft board
 data/reference/  Brawlers, maps, modes, class overrides (committed)
@@ -226,7 +230,7 @@ Render's free 512 MB tier and cold-starts fast; PyTorch is used only for *traini
 ## Roadmap
 
 - [x] Data pipeline · win-prob model · draft engine · web app
-- [x] Seat-aware search · composition warnings · roster mastery
+- [x] Partial-draft-native model · composition warnings · roster mastery
 - [x] Continuous data refresh · free, self-updating public deployment (NumPy serving)
 - [ ] Best-of-3 series awareness · map-geometry features
 
