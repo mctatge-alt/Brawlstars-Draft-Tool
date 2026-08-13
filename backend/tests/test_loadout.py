@@ -83,3 +83,23 @@ def test_parse_roster_retains_owned_item_ids():
     assert m.owned_gears == ({"id": 5, "name": "Speed", "level": 3},)
     # Backwards-compatible booleans still derived.
     assert m.has_starpower and m.has_gadget and m.has_gears
+
+
+def test_no_buffie_object_is_not_flagged_missing():
+    # A brawler the game hasn't given buffies yet (e.g. Mr. P) carries no `buffies` object.
+    # It must NOT be reported as "missing buffie" — there is nothing to be missing.
+    player = {"brawlers": [{"id": 16000000, "power": 11}]}
+    m = mastery.parse_roster(player)[16000000]
+    assert m.buffies_total == 0
+    assert "missing buffie" not in m.gaps()
+
+
+def test_partly_owned_buffies_are_flagged_missing():
+    # A brawler that *does* have buffie slots but the player hasn't filled them all is a real gap.
+    player = {"brawlers": [{
+        "id": 16000000, "power": 11,
+        "buffies": {"gadget": True, "starPower": False, "hyperCharge": False},
+    }]}
+    m = mastery.parse_roster(player)[16000000]
+    assert (m.buffies_have, m.buffies_total) == (1, 3)
+    assert "missing buffie" in m.gaps()

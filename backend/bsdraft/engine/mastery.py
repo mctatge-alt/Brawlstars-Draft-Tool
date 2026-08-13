@@ -3,8 +3,10 @@
 Personalizes recommendations to brawlers the player actually owns and is invested in:
 power level, personal trophies (comfort), and owned star powers / gadgets / gears /
 hypercharge / **buffies**. Buffies are per-item buff enhancements
-(`{"gadget": bool, "starPower": bool, "hyperCharge": bool}`); a brawler lacking buffies is
-under-built and gets a lower investment score.
+(`{"gadget": bool, "starPower": bool, "hyperCharge": bool}`); the roster reports this object
+only for brawlers that actually *have* buffies, so its key-count is that brawler's real buffie
+slot total. A brawler with unowned buffie slots is under-built and gets a lower investment
+score; a brawler with no buffies yet (e.g. Mr. P) has an empty object and is never flagged.
 """
 from __future__ import annotations
 
@@ -85,6 +87,9 @@ def _gears(items) -> Tuple[dict, ...]:
 def parse_roster(player: dict) -> Dict[int, Mastery]:
     roster: Dict[int, Mastery] = {}
     for b in player.get("brawlers", []):
+        # The roster only carries a `buffies` object for brawlers that have buffie slots at
+        # all, so its key-count is the real slot total — brawlers without buffies (e.g. Mr. P)
+        # get an empty object and total 0, and must NOT be reported as "missing buffie".
         buf = b.get("buffies") or {}
         have = sum(1 for v in buf.values() if v) if isinstance(buf, dict) else 0
         total = len(buf) if isinstance(buf, dict) else 0
@@ -102,7 +107,7 @@ def parse_roster(player: dict) -> Dict[int, Mastery]:
             has_gears=bool(gears),
             has_hypercharge=bool(b.get("hyperCharges")),
             buffies_have=have,
-            buffies_total=total or 3,
+            buffies_total=total,
             owned_star_powers=_ids(star_powers),
             owned_gadgets=_ids(gadgets),
             owned_gears=_gears(gears),
