@@ -3,10 +3,10 @@
 Personalizes recommendations to brawlers the player actually owns and is invested in:
 power level, personal trophies (comfort), and owned star powers / gadgets / gears /
 hypercharge / **buffies**. Buffies are per-item buff enhancements
-(`{"gadget": bool, "starPower": bool, "hyperCharge": bool}`); the roster reports this object
-only for brawlers that actually *have* buffies, so its key-count is that brawler's real buffie
-slot total. A brawler with unowned buffie slots is under-built and gets a lower investment
-score; a brawler with no buffies yet (e.g. Mr. P) has an empty object and is never flagged.
+(`{"gadget": bool, "starPower": bool, "hyperCharge": bool}`). Every brawler the roster returns
+carries this object with all three keys present — owned or not — so the slot total is read from
+the object's own keys rather than assumed. A brawler with unowned buffie slots is under-built
+and gets a lower investment score.
 """
 from __future__ import annotations
 
@@ -87,9 +87,10 @@ def _gears(items) -> Tuple[dict, ...]:
 def parse_roster(player: dict) -> Dict[int, Mastery]:
     roster: Dict[int, Mastery] = {}
     for b in player.get("brawlers", []):
-        # The roster only carries a `buffies` object for brawlers that have buffie slots at
-        # all, so its key-count is the real slot total — brawlers without buffies (e.g. Mr. P)
-        # get an empty object and total 0, and must NOT be reported as "missing buffie".
+        # Slot total is the object's own key count, not a hardcoded 3. Every roster entry
+        # observed so far carries all three keys, so this reads the same — but if the object
+        # is ever absent or resized, counting what's actually there degrades to "no buffie
+        # gap" instead of inventing slots the player has no way to fill.
         buf = b.get("buffies") or {}
         have = sum(1 for v in buf.values() if v) if isinstance(buf, dict) else 0
         total = len(buf) if isinstance(buf, dict) else 0

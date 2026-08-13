@@ -85,9 +85,10 @@ def test_parse_roster_retains_owned_item_ids():
     assert m.has_starpower and m.has_gadget and m.has_gears
 
 
-def test_no_buffie_object_is_not_flagged_missing():
-    # A brawler the game hasn't given buffies yet (e.g. Mr. P) carries no `buffies` object.
-    # It must NOT be reported as "missing buffie" — there is nothing to be missing.
+def test_absent_buffie_object_invents_no_gap():
+    # Defensive: the live roster always sends a 3-key `buffies` object, so this shape isn't
+    # observed today. If it ever appears, the slot total must fall to 0 rather than assume 3 —
+    # a fabricated total would show an unfillable "missing buffie" tag on the pick cards.
     player = {"brawlers": [{"id": 16000000, "power": 11}]}
     m = mastery.parse_roster(player)[16000000]
     assert m.buffies_total == 0
@@ -95,7 +96,8 @@ def test_no_buffie_object_is_not_flagged_missing():
 
 
 def test_partly_owned_buffies_are_flagged_missing():
-    # A brawler that *does* have buffie slots but the player hasn't filled them all is a real gap.
+    # The real shape: three keys, some false. An unfilled slot is a genuine gap — a brawler
+    # with all three false (Mr. P, on the reference roster) is correctly flagged too.
     player = {"brawlers": [{
         "id": 16000000, "power": 11,
         "buffies": {"gadget": True, "starPower": False, "hyperCharge": False},
