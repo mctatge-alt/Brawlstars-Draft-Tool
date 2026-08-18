@@ -15,10 +15,16 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
   the gate and omitted `power`, so under-floor brawlers (e.g. a Power-9 Sandy at Legendary) still
   appeared in personalized picks. Redeployed; the picker now marks them "needs Power 11 in
   <bracket>" and they're excluded from your pick's recommendations.
-- **Boosted-rotation expiry hardened.** The `valid_until` fail-safe was only checked at process
-  start, but the deployed API is kept warm for days — it could serve an expired FREE rotation long
-  after a season flipped. Now re-checked on every request; the Season 1 set (Berry / Tara / Meg)
-  is marked to expire 2026-08-18 with Season 2 (Trunk / Willow / Kaze) queued for promotion.
+- **Boosted-rotation season flips are now hands-off.** The `valid_until` fail-safe was only
+  checked at process start, but the deployed API is kept warm for days — it could serve an expired
+  FREE rotation long after a season flipped. The rotation logic now runs on every request against
+  an explicit **UTC** clock (all serving hosts agree; hand-staged dates are targetable), and an
+  upcoming rotation can be staged with an `active_from` date or exact instant: Season 1
+  (Berry / Tara / Meg) serves through 2026-08-18 UTC, and Season 2 (Trunk / Willow / Kaze) takes
+  over automatically at 2026-08-19 10:00 UTC — the overnight window between them deliberately
+  serves no FREE set, since a wrong badge is worse than a missing one. Non-string dates fail safe
+  instead of erroring, a boosted-watch rewrite carries staged dates forward for seasons whose
+  names still match, and the committed file is schema-checked in tests.
 - Loadout hover: both gear slots are starred on your own seat, not just the single best gear.
 
 ## 2026-08-17

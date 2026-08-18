@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time as dt_time, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -152,9 +152,9 @@ def load_ranked_maps() -> tuple:
 @lru_cache(maxsize=1)
 def _ranked_boosted_doc() -> Optional[dict]:
     """Parsed ``ranked_boosted.json``, or None when absent/unreadable. Only the file parse is
-    cached — the ``valid_until`` guard lives in :func:`load_ranked_boosted` and runs per call,
-    because the deployed API is deliberately kept warm for days: a process-start-only check would
-    keep serving an expired rotation long after the season flipped."""
+    cached — the date logic (:func:`_rotation_for_now`) runs per call, because the deployed API
+    is deliberately kept warm for days: a process-start-only check would keep serving an expired
+    rotation (or miss a staged season handover) long after the boundary."""
     if not RANKED_BOOSTED_PATH.exists():
         return None
     try:
@@ -163,31 +163,88 @@ def _ranked_boosted_doc() -> Optional[dict]:
         return None
 
 
+def _now_utc() -> datetime:
+    """Serving-side clock, anchored to **UTC** explicitly (test seam). Render runs UTC but the
+    home Mac runs local time, and Supercell's own season boundaries are UTC-hour events — an
+    implicit local ``date.today()`` would make the two serving hosts flip the FREE set hours
+    apart, and hand-staged dates untargetable."""
+    return datetime.now(timezone.utc)
+
+
+def _parse_boundary(value, *, end_of_day: bool) -> Optional[datetime]:
+    """A hand-staged rotation boundary → aware UTC datetime, or None when the value isn't a
+    parseable string (the *callers* pick the fail-safe direction for None). Two forms:
+    a bare ISO date (``2026-08-19``) means the whole **UTC** day — its first instant as a start,
+    its last as an end (``end_of_day``) — and a full ISO datetime (``2026-08-19T10:00:00Z`` or
+    with an offset; naive means UTC) pins the exact instant, for when the in-game flip hour is
+    known. Type-checked because the file is hand-edited: a non-string here must fail safe, not
+    500 every request that loads the rotation."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    s = value.strip()
+    try:
+        d = date.fromisoformat(s)  # strict: bare dates only
+        return datetime.combine(d, dt_time.max if end_of_day else dt_time.min, tzinfo=timezone.utc)
+    except ValueError:
+        pass
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _rotation_for_now(doc: dict, now: datetime) -> Optional[dict]:
+    """The rotation to serve at ``now`` (aware UTC): ``active`` while its ``valid_until``
+    boundary hasn't passed, else — and this is what makes a season flip hands-off — the
+    ``upcoming`` entry whose hand-staged ``active_from`` has arrived. No API or blog exposes the
+    live season, so the flip moment is human knowledge; staging it in the data lets the handover
+    happen at the boundary with no midnight edit-and-deploy. Where windows overlap, the rotation
+    with the latest start wins (a staged season takes over from a sloppy ``valid_until``).
+
+    Fail-safes are asymmetric on purpose: a malformed ``valid_until`` keeps ``active`` serving
+    (expiring early misleads no one), but a malformed / absent ``active_from`` keeps an upcoming
+    rotation *unserved* (starting early would mislead — the exact case this file's fail-safes
+    exist to prevent). Between an expired ``valid_until`` and a not-yet-arrived ``active_from``
+    nothing serves — a deliberate gap for when the exact flip hour is unknown."""
+    best = None  # (start, rotation) — later start wins; an upcoming entry beats `active` on a tie
+    active = doc.get("active") or {}
+    if active:
+        until = _parse_boundary(doc.get("valid_until"), end_of_day=True)
+        if until is None or now <= until:  # unset/malformed boundary — keep serving
+            best = (datetime.min.replace(tzinfo=timezone.utc), active)
+    for entry in doc.get("upcoming") or []:
+        if not isinstance(entry, dict):
+            continue
+        start = _parse_boundary(entry.get("active_from"), end_of_day=False)
+        if start is None:
+            continue  # not staged (or malformed) — never risk serving a rotation early
+        if start <= now and (best is None or start >= best[0]):
+            best = (start, entry)
+    return best[1] if best else None
+
+
 def load_ranked_boosted() -> tuple:
     """Brawler ids of the current season's Ranked **free / "boosted" brawlers** — the maxed
     brawlers everyone may use in Ranked regardless of ownership. Read from the committed
     ``ranked_boosted.json`` (maintained by the ``boosted-watch`` scraper, see
-    :mod:`bsdraft.collect.boosted`); the ``active.brawlers`` **names** are resolved to ids here so
-    a catalog rename can't strand a hard-coded id.
+    :mod:`bsdraft.collect.boosted`); the rotation's **names** are resolved to ids here so a
+    catalog rename can't strand a hard-coded id. Which rotation serves — ``active``, or an
+    ``upcoming`` entry whose staged ``active_from`` has arrived — is decided per call by
+    :func:`_rotation_for_now` against a UTC clock, so season flips happen at the staged boundary
+    even on a long-lived, kept-warm process, and every serving host agrees on the FREE set.
 
     Fail-safe (the list must never *mislead* — telling a player they can freely pick a brawler
     they actually can't is worse than showing none): returns ``()`` when the file is absent /
-    unreadable, when no name resolves, or when the optional ``valid_until`` date (the last day the
-    rotation is served, inclusive) has passed — re-checked on every call, see
-    :func:`_ranked_boosted_doc`."""
+    unreadable, when no name resolves, or when no rotation covers the current moment."""
     doc = _ranked_boosted_doc()
     if doc is None:
         return ()
-    valid_until = (doc.get("valid_until") or "").strip()
-    if valid_until:
-        try:
-            if date.fromisoformat(valid_until) < date.today():
-                return ()
-        except ValueError:
-            pass  # malformed date — ignore the guard rather than drop the rotation
-    active = doc.get("active") or {}
+    rotation = _rotation_for_now(doc, _now_utc())
+    if rotation is None:
+        return ()
     ids = []
-    for name in active.get("brawlers", []) or []:
+    for name in rotation.get("brawlers", []) or []:
         b = brawler_by_name(name) if isinstance(name, str) else None
         if b is not None and b.id not in ids:
             ids.append(b.id)

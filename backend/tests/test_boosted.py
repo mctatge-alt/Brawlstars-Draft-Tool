@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import tempfile
 from contextlib import contextmanager
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bsdraft.collect import boosted as B
@@ -275,37 +275,175 @@ def test_reference_future_valid_until_is_active():
         assert len(R.load_ranked_boosted()) == 1
 
 
+@contextmanager
+def _serving_now(iso):
+    """Pin the reference-side UTC clock (R._now_utc) so boundary behavior is testable; yields a
+    mutable holder so a test can advance the clock mid-flight (warm-cache scenarios)."""
+    class _Clock:
+        now = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+
+    old = R._now_utc
+    R._now_utc = lambda: _Clock.now
+    try:
+        yield _Clock
+    finally:
+        R._now_utc = old
+
+
+def _at(iso):
+    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def test_reference_valid_until_expires_between_calls_despite_cache():
     # The deployed API is kept warm for days, so the expiry guard must run per *call*, not per
     # process: a rotation served fine on its last valid day must vanish the next morning without
     # a restart. Only the file parse (_ranked_boosted_doc) may be cached.
-    class _FakeDate(date):
-        _today = date(2026, 8, 18)
-
-        @classmethod
-        def today(cls):
-            return cls._today
-
-    old_date = R.date
-    R.date = _FakeDate
-    try:
+    with _serving_now("2026-08-18T12:00:00Z") as clock:
         with _committed_at({"valid_until": "2026-08-18", "active": {"brawlers": ["Berry"]}}):
             assert len(R.load_ranked_boosted()) == 1   # last valid day (inclusive) — still served
-            _FakeDate._today = date(2026, 8, 19)       # midnight passes; parse cache still warm
+            clock.now = _at("2026-08-19T12:00:00Z")    # midnight passes; parse cache still warm
             assert R.load_ranked_boosted() == ()       # expired — dropped without a restart
-    finally:
-        R.date = old_date
+
+
+_STAGED_DOC = {  # the committed shape: active season expiring, successor staged by date
+    "valid_until": "2026-08-18",
+    "active": {"season": "Season 1", "brawlers": ["Berry", "Tara", "Meg"]},
+    "upcoming": [{"season": "Season 2", "active_from": "2026-08-19",
+                  "brawlers": ["Trunk", "Willow", "Kaze"]}],
+}
+
+
+def test_reference_staged_upcoming_takes_over_on_its_date():
+    # The season handover is data-staged: no restart, no midnight edit — the same warm process
+    # serves Season 1 through its last day and Season 2 from the staged date.
+    with _serving_now("2026-08-18T12:00:00Z") as clock:
+        with _committed_at(_STAGED_DOC):
+            assert R.load_ranked_boosted() == tuple(
+                R.brawler_by_name(n).id for n in ["Berry", "Tara", "Meg"])
+            clock.now = _at("2026-08-19T12:00:00Z")
+            assert R.load_ranked_boosted() == tuple(
+                R.brawler_by_name(n).id for n in ["Trunk", "Willow", "Kaze"])
+
+
+def test_reference_datetime_boundaries_pin_the_hour():
+    # When the in-game flip hour is known, a full ISO datetime stages it exactly: the boundary is
+    # the instant, not the day — and everything is evaluated in UTC, so serving hosts in different
+    # local timezones (Render=UTC, home Mac=EDT) agree on the FREE set at every moment.
+    doc = dict(_STAGED_DOC, upcoming=[{"season": "Season 2", "active_from": "2026-08-19T10:00:00Z",
+                                       "brawlers": ["Trunk"]}])
+    with _committed_at(doc):
+        with _serving_now("2026-08-19T09:59:59Z"):
+            assert R.load_ranked_boosted() == ()       # gap: Season 1 over, hour not reached
+        with _serving_now("2026-08-19T10:00:01Z"):
+            assert len(R.load_ranked_boosted()) == 1   # Trunk, from the staged instant
+
+
+def test_reference_staged_upcoming_does_not_serve_early():
+    # A staged successor must not leak in while the active season still runs, nor before its own
+    # start once the active one has expired (the gap serves nothing — fail-safe).
+    doc = dict(_STAGED_DOC, upcoming=[{"season": "Season 2", "active_from": "2026-08-20",
+                                       "brawlers": ["Trunk"]}])
+    with _serving_now("2026-08-18T12:00:00Z"):
+        with _committed_at(doc):
+            assert len(R.load_ranked_boosted()) == 3   # Season 1, untouched by the staged entry
+    with _serving_now("2026-08-19T12:00:00Z"):
+        with _committed_at(doc):
+            assert R.load_ranked_boosted() == ()       # gap day: expired, successor not started
+
+
+def test_reference_unstaged_or_malformed_upcoming_never_serves():
+    # No active_from (the scraper never writes one) or a malformed date → the upcoming entry
+    # stays unserved even with the active season expired: serving early would mislead.
+    for entry in ({"season": "S2", "brawlers": ["Trunk"]},
+                  {"season": "S2", "active_from": "soon", "brawlers": ["Trunk"]}):
+        with _serving_now("2026-08-19T12:00:00Z"):
+            with _committed_at(dict(_STAGED_DOC, upcoming=[entry])):
+                assert R.load_ranked_boosted() == ()
+
+
+def test_reference_non_string_dates_fail_safe_not_500():
+    # The file is hand-edited; a typo like an unquoted 20260818 is *valid JSON* with a non-string
+    # type. That must fail SAFE in each direction — valid_until unreadable keeps active serving,
+    # active_from unreadable keeps the successor unserved — never raise into /api/reference.
+    doc = {"valid_until": 20260818,
+           "active": {"season": "S1", "brawlers": ["Berry"]},
+           "upcoming": [{"season": "S2", "active_from": 20260819, "brawlers": ["Trunk"]}]}
+    with _serving_now("2026-08-25T12:00:00Z"):
+        with _committed_at(doc):
+            ids = R.load_ranked_boosted()              # must not raise
+    assert ids == (R.brawler_by_name("Berry").id,)     # active serves; staged entry stays dark
+
+
+_ROTATION_KEYS = {"season", "brawlers", "featured_mode", "active_from"}
+_DOC_KEYS = {"_comment", "source_url", "scraped_at", "valid_until", "active", "upcoming"}
+
+
+def test_committed_file_is_valid():
+    # The checked-in data/reference/ranked_boosted.json: strict key schema (a typo like
+    # 'active_form' silently disables a staged handover — reject unknown keys outright), every
+    # date parseable, and any staged handover exercised end-to-end at its own boundaries.
+    doc = json.loads(R.RANKED_BOOSTED_PATH.read_text(encoding="utf-8"))
+    assert set(doc) <= _DOC_KEYS, f"unknown top-level key(s): {set(doc) - _DOC_KEYS}"
+    entries = [e for e in [doc.get("active")] + list(doc.get("upcoming") or []) if e]
+    for e in entries:
+        assert set(e) <= _ROTATION_KEYS, f"unknown rotation key(s): {set(e) - _ROTATION_KEYS}"
+    if doc.get("valid_until") is not None:
+        assert R._parse_boundary(doc["valid_until"], end_of_day=True) is not None
+    for e in doc.get("upcoming") or []:
+        if "active_from" in e:
+            assert R._parse_boundary(e["active_from"], end_of_day=False) is not None
+
+    # A staged handover must actually hand over: active serves just before its end, the staged
+    # successor serves from just after its start, and they differ.
+    until = R._parse_boundary(doc.get("valid_until"), end_of_day=True)
+    staged = [e for e in doc.get("upcoming") or [] if e.get("active_from")]
+    if until and staged:
+        start = R._parse_boundary(staged[0]["active_from"], end_of_day=False)
+        with _committed_at(doc):
+            with _serving_now((until - timedelta(seconds=1)).isoformat()):
+                before = R.load_ranked_boosted()
+            with _serving_now((start + timedelta(seconds=1)).isoformat()):
+                after = R.load_ranked_boosted()
+        assert before and after and set(before) != set(after)
+    else:  # no flip staged — the plain active rotation must resolve
+        with _committed_at(doc):
+            with _serving_now(datetime.now(timezone.utc).isoformat()):
+                assert R.load_ranked_boosted()
+
+
+def test_write_document_carries_staged_dates_forward():
+    # A boosted-watch rewrite knows rotation *content*, never dates: valid_until and a staged
+    # active_from must survive a rewrite for seasons whose names still match (else a routine
+    # notes edit would silently destroy a staged season handover), and drop on a rename.
+    report = B.parse_boosted(
+        _mk_html([_ranked_block(
+            _season("Season 1", "Gem Grab", ["Berry", "Tara", "Meg"]),
+            _season("Season 2", "Brawl Ball", ["Trunk", "Willow", "Kaze"]))]), JUNE_URL)
+    staged = {"valid_until": "2026-08-18",
+              "active": {"season": "Season 1", "brawlers": ["Berry", "Tara", "Meg"]},
+              "upcoming": [{"season": "Season 2", "active_from": "2026-08-19T10:00:00Z",
+                            "brawlers": ["Trunk", "Willow", "Kaze"]}]}
+    with _committed_at(staged) as p:
+        B.write_document(report)
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        assert doc["valid_until"] == "2026-08-18"                       # same active season name
+        assert doc["upcoming"][0]["active_from"] == "2026-08-19T10:00:00Z"
+    renamed = dict(staged, active={"season": "Season 0", "brawlers": ["Berry"]},
+                   upcoming=[{"season": "Season 9", "active_from": "2026-08-19",
+                              "brawlers": ["Trunk"]}])
+    with _committed_at(renamed) as p:
+        B.write_document(report)
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        assert doc["valid_until"] is None                               # renamed → restage by hand
+        assert "active_from" not in doc["upcoming"][0]
 
 
 def test_reference_skips_unknown_names():
     with _committed_at({"active": {"brawlers": ["Berry", "Zzzznotreal"]}}):
         assert len(R.load_ranked_boosted()) == 1
-
-
-def test_committed_file_is_valid():
-    # The checked-in data/reference/ranked_boosted.json must load without error to a tuple of ids.
-    ids = R.load_ranked_boosted()
-    assert isinstance(ids, tuple) and all(isinstance(i, int) for i in ids)
 
 
 if __name__ == "__main__":

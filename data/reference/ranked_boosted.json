@@ -1,5 +1,5 @@
 {
-  "_comment": "Ranked free / 'boosted' brawlers — the maxed brawlers everyone may use in Ranked this season, scraped from the release-notes 'Ranked' section by backend/bsdraft/collect/boosted.py (the boosted-watch CI job). 'active' is the current season; the serving layer resolves the names to ids and treats them as owned-at-full-loadout when personalizing. Hand-editable. 'valid_until' is the LAST day the active rotation is served (inclusive); after it the loader serves no free brawlers until a new season is promoted here — when Season 2 goes live, move it from 'upcoming' to 'active' and clear or extend 'valid_until'.",
+  "_comment": "Ranked free / 'boosted' brawlers — the maxed brawlers everyone may use in Ranked this season, scraped from the release-notes 'Ranked' section by backend/bsdraft/collect/boosted.py (the boosted-watch CI job). 'active' is the current season; the serving layer resolves the names to ids and treats them as owned-at-full-loadout when personalizing. Hand-editable. All dates are UTC: a bare date means that whole UTC day, a full ISO datetime (e.g. 2026-08-19T10:00:00Z) pins the hour. 'valid_until' is the last moment the active rotation serves (a bare date = through that day's end). An 'upcoming' entry may carry a hand-staged 'active_from': the loader hands over to it automatically from that moment (no API/blog exposes the live season, so the flip is human knowledge — stage it here rather than editing at midnight); until then, after valid_until, nothing serves — a deliberate fail-safe gap when the exact flip hour is unknown. An upcoming entry with no 'active_from' is never served. A boosted-watch rewrite carries these dates forward for seasons whose names still match.",
   "source_url": "https://supercell.com/en/games/brawlstars/blog/release-notes/release-notes-june-2026",
   "scraped_at": "2026-08-11",
   "valid_until": "2026-08-18",
@@ -15,6 +15,7 @@
   "upcoming": [
     {
       "season": "Season 2",
+      "active_from": "2026-08-19T10:00:00Z",
       "brawlers": [
         "Trunk",
         "Willow",

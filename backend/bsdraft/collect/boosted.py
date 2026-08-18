@@ -300,21 +300,43 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _to_document(report: BoostedReport) -> dict:
-    """The committed ``ranked_boosted.json`` shape. ``valid_until`` is left null for a human to
-    set the season-end date (an optional fail-safe the serving layer honors)."""
+def _to_document(report: BoostedReport, committed: Optional[dict] = None) -> dict:
+    """The committed ``ranked_boosted.json`` shape. ``valid_until`` / per-entry ``active_from``
+    are *hand-staged* season-flip boundaries the serving layer honors (all UTC; see the emitted
+    ``_comment``) — a scrape knows rotation *content*, never dates, so a rewrite carries the
+    committed dates forward for seasons whose **names still match** rather than silently
+    destroying a staged handover. A season that changed identity drops its dates (a human
+    restages; the PR body says so)."""
     active = report.active
+    committed = committed or {}
+    old_active = committed.get("active") or {}
+    valid_until = (committed.get("valid_until")
+                   if active and old_active.get("season") == active.season else None)
+    staged = {e.get("season"): e.get("active_from")
+              for e in (committed.get("upcoming") or []) if isinstance(e, dict)}
+    upcoming = []
+    for r in report.upcoming:
+        entry = r.to_committed()
+        if staged.get(r.season):
+            entry["active_from"] = staged[r.season]
+        upcoming.append(entry)
     return {
         "_comment": ("Ranked free / 'boosted' brawlers — the maxed brawlers everyone may use in "
                      "Ranked this season, scraped from the release-notes 'Ranked' section by "
                      "backend/bsdraft/collect/boosted.py (the boosted-watch CI job). 'active' is "
                      "the current season; the serving layer resolves the names to ids and treats "
-                     "them as owned-at-full-loadout when personalizing. Hand-editable."),
+                     "them as owned-at-full-loadout when personalizing. Hand-editable. All dates "
+                     "are UTC: a bare date means that whole UTC day, a full ISO datetime (e.g. "
+                     "2026-08-19T10:00:00Z) pins the hour. 'valid_until' is the last moment the "
+                     "active rotation serves. An 'upcoming' entry may carry a hand-staged "
+                     "'active_from': the loader hands over to it automatically from that moment; "
+                     "an entry without one is never served. A boosted-watch rewrite carries these "
+                     "dates forward for seasons whose names still match."),
         "source_url": _safe_url(report.url),
         "scraped_at": _today(),
-        "valid_until": None,
+        "valid_until": valid_until,
         "active": active.to_committed() if active else None,
-        "upcoming": [r.to_committed() for r in report.upcoming],
+        "upcoming": upcoming,
     }
 
 
@@ -352,8 +374,8 @@ def write_document(report: BoostedReport) -> Path:
                          "add an alias in patchnotes._NAME_ALIASES or check the notes")
     BOOSTED_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = BOOSTED_PATH.parent / (BOOSTED_PATH.name + ".tmp")
-    tmp.write_text(json.dumps(_to_document(report), ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
+    tmp.write_text(json.dumps(_to_document(report, load_committed()), ensure_ascii=False, indent=2)
+                   + "\n", encoding="utf-8")
     tmp.replace(BOOSTED_PATH)
     return BOOSTED_PATH
 
@@ -405,7 +427,10 @@ def render_pr(report: BoostedReport) -> Tuple[str, str]:
         lines += [f"> ⚠️ {_cell(report.note)}", ""]
     lines += [
         f"_Fingerprint `{report.fingerprint}` — a new PR opens only when the rotation content "
-        "changes. Edit `active`/`valid_until` in the committed file as needed._",
+        "changes. Edit `active`/`valid_until`/staged `active_from` dates (all UTC) in the "
+        "committed file as needed: the rewrite carries dates forward only for seasons whose "
+        "names still match, so **restage any season-flip boundary for renamed seasons** before "
+        "merging._",
         "",
         f"<!-- {FINGERPRINT_MARKER}:{report.fingerprint} -->",
     ]
