@@ -12,6 +12,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from bsdraft.data import catalog as C
 from bsdraft.data import reference as R
 
@@ -93,6 +95,42 @@ def test_accessory_removal_blocks_automerge():
     d = C.diff_catalogs(BASE, after)
     assert d.changed and not d.safe_to_automerge
     assert any("gadget removed" in r for r in d.destructive)
+
+
+# --- duplicated-accessory guard ---------------------------------------------------
+
+def test_dedupe_strips_duplicate_from_the_brawler_the_description_disowns():
+    # The real 2026-08 case: the live API served Brock's gadgets under Bolt too.
+    brock = brawler(1, "Brock", gadgets=[(201, "Rocket Laces")])
+    bolt = brawler(2, "Bolt", gadgets=[(201, "Rocket Laces"), (202, "Oil Change")])
+    for b in (brock, bolt):
+        b["gadgets"][0]["description"] = "Brock jumps to targeted area."
+    bolt["gadgets"][1]["description"] = "Bolt gains a shield."
+    notes = C.dedupe_accessories({"list": [brock, bolt]})
+    assert [g["id"] for g in brock["gadgets"]] == [201]     # rightful owner keeps it
+    assert [g["id"] for g in bolt["gadgets"]] == [202]      # impostor copy stripped
+    assert len(notes) == 1 and "Bolt" in notes[0] and "Rocket Laces" in notes[0]
+
+
+def test_dedupe_refuses_when_descriptions_cannot_pick_an_owner():
+    a = brawler(1, "Shelly", gadgets=[(201, "Mystery Box")])
+    b = brawler(2, "Colt", gadgets=[(201, "Mystery Box")])
+    # Names neither claimant …
+    a["gadgets"][0]["description"] = b["gadgets"][0]["description"] = "Does something."
+    with pytest.raises(ValueError, match="Mystery Box"):
+        C.dedupe_accessories({"list": [a, b]})
+    # … and naming both is just as ambiguous.
+    a["gadgets"][0]["description"] = b["gadgets"][0]["description"] = "Shelly and Colt swap."
+    with pytest.raises(ValueError, match="single out"):
+        C.dedupe_accessories({"list": [a, b]})
+
+
+def test_dedupe_leaves_a_clean_catalog_untouched():
+    payload = {"list": [brawler(1, "Shelly", gadgets=[(201, "Fast Forward")]),
+                        brawler(2, "Colt", cls="Marksman", gadgets=[(202, "Speedloader")])]}
+    before = json.dumps(payload, sort_keys=True)
+    assert C.dedupe_accessories(payload) == []
+    assert json.dumps(payload, sort_keys=True) == before
 
 
 # --- degraded-payload safety rules ----------------------------------------------

@@ -254,6 +254,20 @@ def test_namespace_gadget_and_starpower_ids_disjoint():
     assert gad.isdisjoint(sp)                                      # justifies not needing kind in the key math
 
 
+def test_accessory_ids_unique_across_brawlers():
+    # The live catalog once served Brock's gadgets under Bolt too (2026-08). A duplicated id
+    # corrupts everything keyed off a brawler's kit — loadout effect classification, item
+    # ownership inference, mastery build scores — so the committed snapshot must never carry
+    # one. catalog.dedupe_accessories strips these at fetch; this pins the invariant.
+    from bsdraft.data import reference as R
+    owners: dict = {}
+    for b in R.load_brawlers():
+        for a in b.gadgets + b.star_powers:
+            owners.setdefault(a.id, []).append(b.name)
+    dups = {aid: names for aid, names in owners.items() if len(names) > 1}
+    assert not dups, f"accessory ids claimed by multiple brawlers: {dups}"
+
+
 # ---- serve blend / fallback ------------------------------------------------------------------
 
 def _synthetic_table(sig_gadget_delta=0.06):

@@ -173,13 +173,61 @@ def validate(payload: dict, label: str) -> List[dict]:
     return items
 
 
+def dedupe_accessories(payload: dict, label: str = "brawlers") -> List[str]:
+    """Strip accessories the catalog serves under more than one brawler, in place.
+
+    Accessory ids are Supercell-assigned and belong to exactly one brawler, but the live API has
+    served the same gadget under two (Bolt carrying Brock's "Rocket Laces"/"Rocket Fuel",
+    2026-08). A duplicated id corrupts everything keyed off a brawler's kit — loadout effect
+    classification, itemstats ownership inference, mastery build scores — so it must never reach
+    the snapshot.
+
+    Resolution: the accessory's own description names its owner ("Brock jumps to targeted
+    area…"), so a duplicate whose description names exactly one claimant is kept there and
+    stripped from the rest. Anything the descriptions can't disambiguate raises ValueError —
+    refusing to overwrite a good snapshot beats guessing. Returns notes of what was stripped,
+    for the caller to log."""
+    claims: Dict[int, List[Tuple[dict, dict]]] = {}
+    for b in (payload.get("list") or []):
+        for fieldname, _kind in ACCESSORY_FIELDS:
+            for a in (b.get(fieldname) or []):
+                if isinstance(a, dict) and isinstance(a.get("id"), int):
+                    claims.setdefault(a["id"], []).append((b, a))
+    notes: List[str] = []
+    for aid, claimants in sorted(claims.items()):
+        if len(claimants) < 2:
+            continue
+        desc = next((a.get("description") for _, a in claimants if a.get("description")), "") or ""
+        named = [(b, a) for b, a in claimants
+                 if b.get("name") and re.search(rf"\b{re.escape(b['name'])}\b", desc)]
+        if len(named) != 1:
+            owners = ", ".join(sorted({b.get("name", "?") for b, _ in claimants}))
+            raise ValueError(
+                f"{label}: accessory {claimants[0][1].get('name', '?')!r} (#{aid}) is claimed by "
+                f"{owners} and its description does not single out an owner — refusing to trust "
+                f"this payload")
+        owner = named[0][0]
+        for b, a in claimants:
+            if b is owner:
+                continue
+            for fieldname, kind in ACCESSORY_FIELDS:
+                if a in (b.get(fieldname) or []):
+                    b[fieldname].remove(a)
+                    notes.append(f"stripped {kind} {a.get('name', '?')!r} (#{aid}) from "
+                                 f"{b.get('name', '?')} — description names "
+                                 f"{owner.get('name', '?')}")
+    return notes
+
+
 def fetch_catalog(path: str, hosts: Iterable[str] = CATALOG_HOSTS,
                   timeout: float = 30.0, url: Optional[str] = None) -> Tuple[dict, str]:
     """GET ``/v1/<path>`` from the first host that returns a valid catalog, or exactly ``url``
     when given (an explicit override is used verbatim — never rewritten into another path).
     Returns ``(payload, source_url)``. Raises the last error if every candidate fails — a
-    bot-block serves HTML under a 200/403, so the JSON decode and :func:`validate` are part of
-    the liveness check, not just the status code."""
+    bot-block serves HTML under a 200/403, so the JSON decode, :func:`validate` and (for
+    brawler catalogs) :func:`dedupe_accessories` are part of the liveness check, not just the
+    status code. Every writer of ``brawlers.json`` fetches through here, so a duplicated
+    accessory is repaired (or rejected) before it can reach the snapshot."""
     last: Optional[Exception] = None
     candidates = [url] if url else [f"{h}/v1/{path}" for h in hosts]
     for url in candidates:
@@ -190,6 +238,9 @@ def fetch_catalog(path: str, hosts: Iterable[str] = CATALOG_HOSTS,
             resp.raise_for_status()
             payload = resp.json()
             validate(payload, path)
+            if path == "brawlers":
+                for note in dedupe_accessories(payload, path):
+                    print(f"catalog: {note}", file=sys.stderr)
             return payload, url
         except (httpx.HTTPError, ValueError, json.JSONDecodeError) as e:
             last = e

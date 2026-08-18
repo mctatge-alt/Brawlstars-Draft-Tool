@@ -6,6 +6,13 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 ## 2026-08-18
 
+- **Bolt no longer shows Brock's gadgets.** The upstream catalog API serves "Rocket Laces" and
+  "Rocket Fuel" under Bolt as well as Brock, and the committed snapshot had carried the duplicate
+  since day one — polluting Bolt's loadout advice (the kit-description effect classifier read
+  Brock's rockets as Bolt's). The snapshot is fixed, and the catalog fetch now strips any
+  accessory served under two brawlers (its description names the real owner) or refuses the
+  payload when it can't tell — so the next auto-refresh can't reintroduce it. A test now pins
+  accessory-id uniqueness across the committed catalog.
 - **Removed the buffie signal everywhere.** The roster API reports which buffies you *own* but
   never how many *exist* per brawler, so the "MISSING BUFFIE" tag misfired on every brawler with
   no buffies released (R-T among them — verified against maxed top-100 rosters). Dropped from the
