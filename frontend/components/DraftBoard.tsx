@@ -348,11 +348,12 @@ function GearSection({ gears, isMySeat, ownedGears }: {
       return (
         <div className="mt-2">
           <div className="label mb-0.5">GEARS · YOURS</div>
+          {/* No level shown: Brawl Stars removed gear upgrade levels (Oct 2022); gears are now a flat
+              purchase at full power, so the API's legacy `level` (always 3) is meaningless. */}
           {enriched.map(({ og, g }) => (
             <ItemRow key={og.id}
               it={{ name: og.name, effect: g?.effect, description: g?.description, comp_why: g?.comp_why }}
-              marked={bestNames.has(og.name)} tag={`Lv ${og.level}/3`}
-              tagTitle={`Your gear's upgrade level — ${og.level} of 3 (max). How far you've upgraded this gear in-game, not a suggestion rank.`} />
+              marked={bestNames.has(og.name)} />
           ))}
         </div>
       );
