@@ -30,13 +30,14 @@ from bsdraft.engine import mastery
 from bsdraft.engine.drift import detect_drift, load_report
 from bsdraft.engine.engine import DraftEngine
 from bsdraft.engine.loadout import loadout_advice
+from bsdraft.engine import purchases as purchases_mod
 from bsdraft.engine.personal import build_personal_stats, matches_from_battlelog
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.playerrank import build_rank_index, current_ranked_tier
 from bsdraft.engine.rank_store import RankIndex, load_rank_index
 from bsdraft.engine.stats import DraftStats, build_bracketed
 from bsdraft.engine.stats_store import load_stats
-from bsdraft.engine.tiers import BRACKETS, bracket_of_tier, tier_label
+from bsdraft.engine.tiers import BRACKETS, bracket_of_tier, min_power_for_bracket, tier_label
 from bsdraft.models.serve import WinProbModel
 
 logger = logging.getLogger("bsdraft.api")
@@ -326,6 +327,9 @@ async def roster(tag: Optional[str] = None):
                 owned_star_powers=list(m.owned_star_powers),
                 owned_gadgets=list(m.owned_gadgets),
                 owned_gears=[S.OwnedGear(**g) for g in m.owned_gears],
+                # Progression state the purchase advisor needs (already parsed by Mastery).
+                power=m.power, has_hypercharge=m.has_hypercharge,
+                buffies_have=m.buffies_have, buffies_total=m.buffies_total,
             )
             for bid, m in r.items()
         ]
@@ -336,6 +340,32 @@ async def roster(tag: Optional[str] = None):
         return resp
     except Exception as e:  # noqa: BLE001
         return S.RosterResponse(loaded=False, tag=t, name="", error=str(e))
+
+
+@app.post("/api/purchases", response_model=S.PurchasesResponse)
+def purchases(req: S.PurchaseRequest):
+    """Rank a player's highest-value next purchases (power upgrades, gadgets, star powers, gears,
+    hypercharges, buffies, new-brawler unlocks) from their ownership snapshot. Like /api/recommend,
+    the client sends the roster it fetched from the keyed tunnel — the public host can't fetch it
+    itself. Scored by meta strength × purchase impact; cost is shown as context (balances are
+    unknowable). See :mod:`bsdraft.engine.purchases`."""
+    owned = {
+        e.id: purchases_mod.OwnedState(
+            power=e.power,
+            star_powers=frozenset(e.owned_star_powers),
+            gadgets=frozenset(e.owned_gadgets),
+            gears=frozenset(purchases_mod._norm(g.name) for g in e.owned_gears),
+            has_hypercharge=e.has_hypercharge,
+            buffies_have=e.buffies_have,
+            buffies_total=e.buffies_total,
+        )
+        for e in req.roster
+    }
+    recs = _engine.recommend_purchases(owned, top=req.top)
+    return S.PurchasesResponse(
+        tag=req.tag or "", name=req.name or "", scope="ranked",
+        recommendations=[S.PurchaseRec(**r) for r in recs],
+    )
 
 
 async def _live_rank(tag_n: str) -> Optional[S.RankResponse]:
@@ -446,13 +476,24 @@ def _roster_for(req: S.RecommendRequest):
     client-sent roster (the only source on the public host), then the server's own roster
     (local/home, where the IP-locked key can fetch it). This season's free/"boosted" brawlers are
     folded in as available-at-full-loadout so they're recommendable even when unowned (an owned
-    one keeps its real mastery). Returns None unless ``personalize`` is set."""
+    one keeps its real mastery). Returns None unless ``personalize`` is set.
+
+    Owned brawlers below the bracket's power floor are dropped: Ranked hard-blocks selecting a
+    brawler under Power 9 (through Diamond) / Power 11 (Mythic up), so recommending one the player
+    couldn't field is a bug — the very report that motivated this gate. Boosted brawlers arrive at
+    Power 11 and are added *after* the filter, so they always clear it. A reported power of 0 means
+    "unknown" (an older client that omits the field) and is left in, so the gate never empties a
+    roster that simply predates power being sent."""
     if not req.personalize:
         return None
+    floor = min_power_for_bracket(req.rank_bracket)
+    fieldable = lambda power: power == 0 or power >= floor
     if req.roster:
-        roster = {e.id: _ReqMastery(e.mastery, e.gaps) for e in req.roster}
+        roster = {e.id: _ReqMastery(e.mastery, e.gaps) for e in req.roster if fieldable(e.power)}
+    elif _engine.roster:
+        roster = {bid: m for bid, m in _engine.roster.items() if fieldable(m.power)}
     else:
-        roster = dict(_engine.roster) if _engine.roster else None
+        roster = None
     if roster is None:
         return None
     for bid in R.load_ranked_boosted():
@@ -474,7 +515,9 @@ def recommend(req: S.RecommendRequest):
     next_to_act = state.next_to_act()
 
     if req.phase == "ban":
-        bans = _engine.recommend_bans(state, top=req.top)
+        # The roster matters during bans too: a brawler the player can't field is free to ban,
+        # while banning one of their own projected picks costs them.
+        bans = _engine.recommend_bans(state, top=req.top, roster=roster)
         return S.RecommendResponse(
             phase="ban", bans=[S.BanRec(**vars(b)) for b in bans],
             composition=composition, warnings=warnings, game_plan=game_plan, next_to_act=next_to_act,

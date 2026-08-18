@@ -26,6 +26,7 @@ from bsdraft.constants import (
 
 CLASS_OVERRIDES_PATH = Path(__file__).resolve().parent / "class_overrides.json"
 RANKED_BOOSTED_PATH = REFERENCE_DIR / "ranked_boosted.json"
+ECONOMY_PATH = REFERENCE_DIR / "economy.json"
 
 
 @dataclass(frozen=True)
@@ -179,6 +180,23 @@ def load_ranked_boosted() -> tuple:
         if b is not None and b.id not in ids:
             ids.append(b.id)
     return tuple(ids)
+
+
+@lru_cache(maxsize=1)
+def load_economy() -> dict:
+    """Curated progression-economy table for the purchase advisor (costs, power gates, impact
+    priors, hypercharge availability). Hand-maintained — none of this is in any catalog and the
+    API never exposes prices; see ``economy.json`` and ``docs/purchase-advisor.md``.
+
+    Fail-safe to ``{}`` so a missing/broken file degrades the advisor to 'no cost/gate context'
+    rather than erroring the endpoint (the consumer treats every section as optional)."""
+    if not ECONOMY_PATH.exists():
+        return {}
+    try:
+        doc = _load_json(ECONOMY_PATH)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
 
 
 def summary() -> str:

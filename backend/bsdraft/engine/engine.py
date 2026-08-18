@@ -2,28 +2,20 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from bsdraft.constants import BRAWLER_CLASSES
 from bsdraft.data import reference as R
-from bsdraft.engine.scoring import PickScore, _class_of, _name_map, score_candidate
+from bsdraft.engine.bans import BanScore
+from bsdraft.engine.scoring import PickScore, _class_of, score_candidate
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.stats import DraftStats
+from bsdraft.engine import bans as bans_mod
 from bsdraft.engine import composition as composition_mod
 from bsdraft.engine import gameplan as gameplan_mod
+from bsdraft.engine import itemstats as itemstats_mod
+from bsdraft.engine import purchases as purchases_mod
 from bsdraft.models.serve import WinProbModel
-
-
-@dataclass
-class BanScore:
-    brawler_id: int
-    name: str
-    cls: str
-    threat: float
-    map_winrate: float
-    use_rate: float
-    confidence: float
 
 
 class DraftEngine:
@@ -46,21 +38,10 @@ class DraftEngine:
             ids = [i for i in ids if i in roster]  # only brawlers the player owns
         return ids
 
-    def recommend_bans(self, state: DraftState, top: int = 6) -> List[BanScore]:
-        """Rank brawlers by threat on this map: strong win-rate, weighted up if contested."""
-        used = state.picked_or_banned()
-        stats = self._stats_for(state)
-        rows = []
-        for b in R.load_brawlers():
-            if b.id in used:
-                continue
-            rate = stats.brawler_rate(b.id, state.map_id)
-            use = stats.use_rate(b.id, state.map_id)
-            threat = 0.85 * rate.winrate + 0.15 * min(1.0, use * 3.0)
-            rows.append(BanScore(b.id, _name_map().get(b.id, str(b.id)), b.cls,
-                                 threat, rate.winrate, use, rate.confidence))
-        rows.sort(key=lambda r: r.threat, reverse=True)
-        return rows[:top]
+    def recommend_bans(self, state: DraftState, top: int = 6, roster=None) -> List[BanScore]:
+        """Rank bans by what they deny given the board — see `engine/bans.py` for the
+        projection and why the list re-ranks as the ban set fills in."""
+        return bans_mod.recommend(state, self._stats_for(state), self.model, top=top, roster=roster)
 
     def recommend_picks(self, state: DraftState, top: int = 10, weights=None, roster=None,
                         personal=None) -> List[PickScore]:
@@ -69,6 +50,14 @@ class DraftEngine:
                   for c in self.candidates(state, roster)]
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:top]
+
+    def recommend_purchases(self, owned: Dict[int, "purchases_mod.OwnedState"],
+                            top: int = 20) -> List[dict]:
+        """Rank a player's highest-value next purchases from their ownership snapshot. Delegates to
+        :mod:`bsdraft.engine.purchases`, feeding it the loaded stats + item win-rate table (the
+        table degrades to None when unbuilt, so the advisor falls back to economy priors)."""
+        return purchases_mod.recommend_purchases(
+            owned, self.stats, itemstats=itemstats_mod.get_itemstats(), top=top)
 
     def composition_report(self, state: DraftState) -> dict:
         return composition_mod.analyze(state)
@@ -92,10 +81,22 @@ def _demo() -> None:
     print(f"Map: {mp.name} ({mp.mode})   model={'ON' if model.available else 'OFF'}   "
           f"games={stats.map_games.get(mp.id, 0)}")
 
-    print("\nTop ban suggestions (deny strongest map brawlers):")
-    for b in engine.recommend_bans(DraftState(map_id=mp.id, mode=mp.mode), top=6):
-        print(f"  {b.name:<14} {b.cls:<14} threat={b.threat:.3f} map_wr={b.map_winrate:.3f} "
-              f"use={b.use_rate:.0%} conf={b.confidence:.2f}")
+    def show_bans(title, st):
+        print(f"\n{title}")
+        for b in engine.recommend_bans(st, top=6):
+            swing = f"{b.ban_value:+.4f}" if b.ban_value is not None else "  n/a "
+            note = " (ours!)" if b.self_deny else (f" -> {b.replacement}" if b.replacement else "")
+            print(f"  {b.name:<14} {b.cls:<14} swing={swing} threat={b.threat:.3f} "
+                  f"map_wr={b.map_winrate:.3f} use={b.use_rate:.0%}{note}")
+
+    # The same map twice: banning the top target re-ranks what's left, because the survivors'
+    # substitutes changed. A static threat table would just shift everything up one row.
+    empty = DraftState(map_id=mp.id, mode=mp.mode)
+    show_bans("Top ban suggestions (swing = projected gain in our win prob):", empty)
+    first = engine.recommend_bans(empty, top=1)
+    if first:
+        show_bans(f"After banning {first[0].name} — note the re-ranking, not just the removal:",
+                  DraftState(map_id=mp.id, mode=mp.mode, bans=[first[0].brawler_id]))
 
     def show(title, st):
         print(f"\n{title}")

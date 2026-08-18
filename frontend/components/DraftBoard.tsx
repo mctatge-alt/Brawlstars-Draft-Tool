@@ -59,6 +59,12 @@ const PICK_ORDER = [0, 1, 1, 0, 0, 1]; // 1-2-2-1 snake; 0 = first-pick team
 // Ranks that draft "blind": a shared ban phase, then you pick your own team without ever
 // seeing the enemy's picks. In Brawl Stars this is Diamond and below.
 const BLIND_PICK_BRACKETS = new Set(["Bronze", "Silver", "Gold", "Diamond"]);
+// Ranked never boosts brawlers to a fixed power — they play at their real level, and each bracket
+// hard-blocks selecting a brawler below a per-brawler floor: Power 9 through Diamond, Power 11 from
+// Mythic up. So an owned brawler under the floor can't be fielded, only the ones at/above it. (The
+// season's free "boosted" brawlers arrive at Power 11 and clear any floor.)
+const P11_BRACKETS = new Set(["Mythic", "Legendary", "Masters", "Pro"]);
+const minPowerForBracket = (b?: string | null) => (b && P11_BRACKETS.has(b) ? 11 : 9);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const two = (x: number) => Math.round(x * 100);
 const cssVars = (vars: Record<string, string | number | undefined>) => vars as React.CSSProperties;
@@ -89,13 +95,28 @@ function pickReason(r: PickRec): string {
   c.sort((a, b) => b[0] - a[0]);
   return c[0] && c[0][0] > 0.004 ? c[0][1] : "balanced pick here";
 }
+// A ban's worth is what it denies *given the rest of the ban set* — so the line explains the
+// projection (who replaces it, whether you'd have taken it), not the brawler's raw stat line.
+// Falls back to the stat line when the backend couldn't project (no model).
 function banReason(r: BanRec): string {
-  const strong = r.map_winrate >= 0.53, popular = r.use_rate >= 0.2;
-  if (strong && popular) return "high pick rate, wins here";
-  if (popular) return "very popular pick";
-  if (strong) return "strong on this map";
-  return "known meta threat";
+  if (r.ban_value == null) {
+    const strong = r.map_winrate >= 0.53, popular = r.use_rate >= 0.2;
+    if (strong && popular) return "high pick rate, wins here";
+    if (popular) return "very popular pick";
+    if (strong) return "strong on this map";
+    return "known meta threat";
+  }
+  if (r.self_deny) return "you'd take this yourself — pick it, don't ban it";
+  if (r.ban_value <= 0.0005)
+    return r.replacement ? `replaceable — ${r.replacement} covers it` : "barely dents their draft";
+  return r.replacement ? `cuts their draft · next best ${r.replacement}` : "nothing left to replace it";
 }
+// Swing is a win-probability delta, shown in points. Small numbers are the honest scale for one
+// ban, so give it a sign and one decimal rather than rounding it into a flat "0%".
+function swingLabel(v: number): string {
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}`;
+}
+const SWING_HINT = "projected gain in your win probability if this brawler is banned, given the bans already placed and who picks first";
 // present signals for a pick, in a stable display order
 function pickSignals(r: PickRec): { k: string; v: number }[] {
   const s: { k: string; v: number }[] = [{ k: "MAP", v: r.map_winrate }];
@@ -209,12 +230,36 @@ function SeatCheck({ checked, disabled, onToggle, seat }: {
   );
 }
 
-// One-line status under the seat checkboxes: what to do, or who's being personalized.
-function SeatHint({ ready, chosen, name, active }: {
+// The backend hands back raw operator-facing text (`str(e)` off the Supercell client — "HTTP 403:
+// auth/IP error — check the token and that this machine's public IP…"). Translate to something a
+// visitor can act on, and say plainly when the fault is ours, not their tag. Raw text goes in the
+// title attribute so the operator can still read it on hover.
+function rosterFailReason(error: string): string {
+  const e = error.toLowerCase();
+  if (e.includes("404") || e.includes("not found")) return "no player with that tag — check it and load again";
+  if (e.includes("429")) return "roster service is busy — retrying shortly";
+  if (e.includes("403") || e.includes("auth/ip") || e.includes("no api token"))
+    return "roster service is down — personalization is off";
+  return "couldn't reach the roster service — personalization is off";
+}
+
+// One-line status under the seat checkboxes: what to do, why it's unavailable, or who's being
+// personalized.
+function SeatHint({ ready, chosen, name, active, hasTag, error }: {
   ready: boolean; chosen: boolean; name?: string; active: boolean;
+  hasTag: boolean; error?: string | null;
 }) {
-  if (!ready)
-    return <div className="mono text-[9px] text-[var(--dim)] mt-2.5">◦ check the box under your pick — load your tag first</div>;
+  if (!ready) {
+    if (!hasTag)
+      return <div className="mono text-[9px] text-[var(--dim)] mt-2.5">◦ check the box under your pick — load your tag first</div>;
+    if (error)
+      return (
+        <div className="mono text-[9px] mt-2.5" style={{ color: "var(--red)" }} title={error}>
+          ⚠ {rosterFailReason(error)}
+        </div>
+      );
+    return <div className="mono text-[9px] text-[var(--dim)] mt-2.5">◦ loading your roster…</div>;
+  }
   if (!chosen)
     return <div className="mono text-[9px] text-[var(--dim)] mt-2.5">◦ check the box under your pick to personalize it</div>;
   return (
@@ -573,11 +618,26 @@ export default function DraftBoard() {
     // No tag → no personalization. Never poll tag-less: the backend used to answer a tag-less
     // request with the operator's own roster, leaking their identity to every visitor.
     if (!rosterTag) { setRoster(null); return; }
+    // Different player → drop the previous one's roster up front, so the `cur.loaded` check in the
+    // catch below can never mistake a stale roster for this tag's. Re-polls don't re-run this effect.
+    setRoster(null);
     let cancelled = false;
     let last = 0;
     const pull = () => {
       last = Date.now();
-      getRoster(rosterTag).then((r) => { if (!cancelled) setRoster(r); }).catch(() => {});
+      getRoster(rosterTag)
+        .then((r) => { if (!cancelled) setRoster(r); })
+        .catch((e) => {
+          // Surface the failure instead of swallowing it: an upstream outage (the roster tunnel's
+          // Supercell key 403ing on an IP rotation) used to present as inert seat checkboxes with
+          // no explanation. But don't wipe a roster that already loaded — a blip on a later poll
+          // shouldn't drop personalization mid-draft.
+          if (!cancelled)
+            setRoster((cur) => cur?.loaded ? cur : {
+              loaded: false, tag: rosterTag, name: "", owned: [],
+              error: String((e as Error)?.message || e),
+            });
+        });
     };
     pull();
     const id = setInterval(pull, ROSTER_POLL_MS);
@@ -623,6 +683,16 @@ export default function DraftBoard() {
   const personalizeReady = !!roster?.loaded;
   const bracket = rankInfo?.found ? rankInfo.bracket : null;
   const personalTag = rankInfo?.found ? rankInfo.tag : null;
+  // Owned brawlers you can actually field in this bracket: at/above its power floor (Power 11 from
+  // Mythic up, else 9). A power of 0 means the roster didn't report it — leave it in rather than
+  // hide a brawler on missing data. Below Mythic the floor is 9, so nothing you own is realistically
+  // excluded; the gate bites in Mythic+, where an un-maxed owned brawler is simply unselectable.
+  const powerFloor = minPowerForBracket(bracket);
+  const fieldableOwned = useMemo(
+    () => (roster?.owned || []).filter((o) => (o.power ?? 0) === 0 || (o.power ?? 0) >= powerFloor),
+    [roster, powerFloor]
+  );
+  const fieldableSet = useMemo(() => new Set(fieldableOwned.map((o) => o.id)), [fieldableOwned]);
 
   const pickSeq = useMemo(
     () => blindPick
@@ -691,7 +761,10 @@ export default function DraftBoard() {
       we_pick_first: wePickFirst, solo_queue: solo, phase,
       personalize: myTurn,
       personal_tag: myTurn ? personalTag : null,
-      roster: myTurn ? roster?.owned ?? null : null,
+      // Only brawlers you can actually field this bracket (owned + at/above the power floor); a
+      // below-floor brawler is unselectable in-game, so it must not be recommended. Boosted/free
+      // brawlers are added server-side (they arrive at Power 11), so they don't belong here.
+      roster: myTurn ? fieldableOwned : null,
       rank_bracket: bracket, top: 12,
     };
     setLoading(true);
@@ -702,7 +775,7 @@ export default function DraftBoard() {
         .finally(() => setLoading(false));
     }, 120);
     return () => clearTimeout(t);
-  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, myTurn, roster, bracket, personalTag, blindPick]);
+  }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, myTurn, fieldableOwned, bracket, personalTag, blindPick]);
 
   useEffect(() => {
     if (!mapId || !mode) return;
@@ -780,13 +853,13 @@ export default function DraftBoard() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [ref, query]);
 
-  // On your own pick, restrict to brawlers you can actually play — owned or this season's free
-  // "boosted" brawlers; otherwise anything unused is placeable.
-  const placeable = (id: number) => !used.has(id) && (!myTurn || ownedSet.has(id) || boostedSet.has(id));
+  // On your own pick, restrict to brawlers you can actually field — owned and at/above the bracket's
+  // power floor, or this season's free "boosted" brawlers; otherwise anything unused is placeable.
+  const placeable = (id: number) => !used.has(id) && (!myTurn || fieldableSet.has(id) || boostedSet.has(id));
   // the brawler Enter will place: first valid match for the current query
   const topMatch = useMemo(
     () => (query.trim() && step.kind !== "done" ? filtered.find((b) => placeable(b.id)) : undefined),
-    [query, filtered, used, myTurn, ownedSet, boostedSet, step.kind]
+    [query, filtered, used, myTurn, fieldableSet, boostedSet, step.kind]
   );
 
   const rotation = useMemo(
@@ -870,6 +943,10 @@ export default function DraftBoard() {
           <span className="brand-gradient text-[15px]">BRAWL DRAFT</span>
           <span className="label hidden md:inline">// CONSOLE</span>
         </div>
+        <a href="/purchases" title="What to upgrade next — personalized purchase advisor"
+          className="mono text-[11px] uppercase tracking-[0.06em] px-2 py-1.5 border border-[var(--line)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--line-strong)] ctl hidden sm:inline">
+          Upgrades ↗
+        </a>
         <select value={mapId ?? ""} onChange={(e) => setMapId(Number(e.target.value))}
           className="mono ctl bg-[var(--panel2)] border border-[var(--line)] pl-2.5 pr-7 py-1.5 text-[12px] max-w-[240px]">
           {rotation.map((m) => (
@@ -949,7 +1026,8 @@ export default function DraftBoard() {
                     </div>
                   ))}
                 </div>
-                <SeatHint ready={personalizeReady} chosen={mySeat != null} name={roster?.name} active={myTurn} />
+                <SeatHint ready={personalizeReady} chosen={mySeat != null} name={roster?.name} active={myTurn}
+                  hasTag={!!rosterTag} error={roster?.error} />
                 {blindPick && (
                   <div className="mono text-[10px] text-[var(--muted)] mt-3">🙈 ENEMY HIDDEN AT DIAMOND · PICKS OPTIMIZE YOUR OWN COMP.</div>
                 )}
@@ -1003,24 +1081,31 @@ export default function DraftBoard() {
           <div className="panel p-3 order-3">
             <div className="flex items-center justify-between mb-2.5">
               <span className="label">{filtered.length} BRAWLERS · TAP OR TYPE ABOVE</span>
-              {myTurn && <span className="mono text-[10px]" style={{ color: "var(--gold)" }}>◈ OWNED + FREE</span>}
+              {myTurn && <span className="mono text-[10px]" style={{ color: "var(--gold)" }}>◈ OWNED{powerFloor === 11 ? " · P11" : ""} + FREE</span>}
             </div>
             <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
               {filtered.map((b) => {
                 const isUsed = used.has(b.id);
                 const isBoosted = boostedSet.has(b.id);
-                // dimmed only on your own pick, when it's neither owned nor a free "boosted" brawler
-                const restricted = myTurn && !ownedSet.has(b.id) && !isBoosted;
+                // dimmed only on your own pick, when you can't field it — neither at/above the power
+                // floor nor a free "boosted" brawler. Owned-but-under-floor reads differently from
+                // not-owned: the game blocks it purely on power level, so say so.
+                const restricted = myTurn && !fieldableSet.has(b.id) && !isBoosted;
+                const underPower = restricted && ownedSet.has(b.id);
                 const isTop = topMatch?.id === b.id;
                 return (
                   <button key={b.id} onClick={() => place(b.id)} disabled={isUsed || restricted || step.kind === "done"}
                     className="group relative disabled:cursor-not-allowed"
-                    title={restricted ? `${b.name} · not owned` : isBoosted ? `${b.name} (${b.cls}) · free this season` : `${b.name} (${b.cls})`}>
+                    title={underPower ? `${b.name} · needs Power ${powerFloor} in ${bracket}` : restricted ? `${b.name} · not owned` : isBoosted ? `${b.name} (${b.cls}) · free this season` : `${b.name} (${b.cls})`}>
                     <span className="tile block p-[3px]"
                       style={cssVars({ "--tc": CLASS_COLOR[b.cls] || "#26303f", borderColor: isTop ? "var(--accent)" : undefined, boxShadow: isTop ? "inset 0 0 0 1px var(--accent)" : undefined })}>
                       <Avatar b={b} size={44} dim={isUsed || restricted} />
                     </span>
                     {isTop && <span className="mono absolute top-0 right-0 text-[8px] px-1 leading-tight" style={{ background: "var(--accent)", color: "#0a0a0c" }}>⏎</span>}
+                    {underPower && !isUsed && (
+                      <span className="mono absolute top-0 right-0 text-[7px] px-0.5 leading-tight font-bold"
+                        style={{ background: "var(--muted)", color: "#0a0a0c" }} title={`not Power ${powerFloor} — unselectable in ${bracket}`}>P{powerFloor}</span>
+                    )}
                     {myTurn && isBoosted && !isTop && !isUsed && (
                       <span className="mono absolute top-0 right-0 text-[7px] px-0.5 leading-tight font-bold"
                         style={{ background: "var(--gold)", color: "#0a0a0c" }} title="free maxed brawler this Ranked season">FREE</span>
@@ -1095,7 +1180,11 @@ function TheCall({ kind, r, b, accent, onPlace }: {
   // Shown instantly (no count-up): under a 20s clock the headline number must read true on the
   // first glance — an animated ramp from 0 briefly shows a misleadingly low value.
   const score = isBan ? br.threat : pr.score;
-  const scoreLabel = isBan ? "THREAT" : "SCORE";
+  // A ban leads with its projected swing when the backend could compute one; threat is the
+  // fallback, and stays visible below either way as the raw read on the brawler.
+  const swing = isBan && br.ban_value != null ? br.ban_value : null;
+  const headline = swing != null ? swingLabel(swing) : pct(score);
+  const scoreLabel = swing != null ? "WIN SWING" : isBan ? "THREAT" : "SCORE";
   const col = isBan ? "var(--red)" : scoreColor(score);
   const reason = isBan ? banReason(br) : pickReason(pr);
   const cls = b?.cls || pr.cls;
@@ -1116,8 +1205,8 @@ function TheCall({ kind, r, b, accent, onPlace }: {
               <div className="display text-[19px] truncate">{r.name}</div>
               <div className="mono text-[10px] tracking-[0.1em]" style={{ color: CLASS_COLOR[cls] || "#aaa" }}>{(CLASS_SHORT[cls] || cls).toUpperCase()}</div>
             </div>
-            <div className="text-right shrink-0">
-              <div className="mono font-bold text-[30px] leading-none tabular-nums" style={{ color: col }}>{pct(score)}</div>
+            <div className="text-right shrink-0" title={swing != null ? SWING_HINT : undefined}>
+              <div className="mono font-bold text-[30px] leading-none tabular-nums" style={{ color: col }}>{headline}</div>
               <div className="mono text-[9px] tracking-[0.12em] text-[var(--dim)] mt-1">{scoreLabel}</div>
             </div>
           </div>
@@ -1192,9 +1281,17 @@ function RankedBan({ r, i, b, onClick }: { r: BanRec; i: number; b?: Brawler; on
           MAP <span style={{ color: r.map_winrate >= 0.5 ? "var(--green)" : "var(--muted)" }}>{two(r.map_winrate)}</span>
           <span className="text-[var(--line-strong)]"> · </span>
           USE <span style={{ color: "var(--gold)" }}>{two(r.use_rate)}</span>
+          {r.self_deny && <>
+            <span className="text-[var(--line-strong)]"> · </span>
+            <span style={{ color: "var(--blue)" }} title="the draft projects this onto your side — pick it rather than ban it">YOURS</span>
+          </>}
         </span>
       </div>
-      <span className="mono font-bold text-[16px] tabular-nums shrink-0" style={{ color: "var(--red)" }}>{pct(r.threat)}</span>
+      <span className="mono font-bold text-[16px] tabular-nums shrink-0"
+        style={{ color: r.self_deny ? "var(--dim)" : "var(--red)" }}
+        title={r.ban_value != null ? SWING_HINT : undefined}>
+        {r.ban_value != null ? swingLabel(r.ban_value) : pct(r.threat)}
+      </span>
     </button>
   );
 }

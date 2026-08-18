@@ -7,6 +7,7 @@ export default function SiteFooter({ blurb }: { blurb?: string }) {
   return (
     <footer className="max-w-[1240px] mx-auto px-3 md:px-5 pb-6 mt-6 pt-4 border-t border-[var(--line)] text-center text-xs text-[var(--muted)]">
       <nav className="flex flex-wrap justify-center gap-x-1.5 gap-y-1.5 mb-3">
+        <a href="/purchases" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">Upgrades</a>
         <a href="/guide" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">Draft guide</a>
         <a href="/how-it-works" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">How it works</a>
         <a href="/faq" className="mono text-[10px] uppercase tracking-[0.08em] px-2 py-1 border border-[var(--line)] hover:border-[var(--line-strong)] hover:text-[var(--text)] ctl">FAQ</a>

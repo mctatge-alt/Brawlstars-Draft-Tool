@@ -1,0 +1,54 @@
+{
+  "_comment": "Curated progression economy for the purchase advisor (engine/purchases.py). NONE of this is in any catalog API, and the official player endpoint exposes ownership but never currency balances or prices — so costs/gates/priors are hand-maintained researched constants (verified ~Aug 2026) and WILL drift on balance updates. Treat as approximate: the advisor ranks by meta value and shows cost only as context, so a stale number misinforms the cost label, not the ranking. Candidate for a future patchnotes-fed refresh. See docs/purchase-advisor.md.",
+
+  "power_cost_cumulative": {
+    "_comment": "Cumulative cost to REACH a given power level, indexed by level 0..11 (0 and 1 are 0). Cost to upgrade current->target = arr[target] - arr[current]. Classic per-step values; to 9 = 1410 PP + 3090 coins, 9->11 = 2330 PP + 4675 coins.",
+    "power_points": [0, 0, 20, 50, 100, 180, 310, 520, 860, 1410, 2300, 3740],
+    "coins":        [0, 0, 20, 55, 130, 270, 560, 1040, 1840, 3090, 4965, 7765]
+  },
+
+  "item_costs": {
+    "_comment": "Coin/PP price to buy one item. Gear = the universal Super Rare tier (Epic/Mythic gears are being retired/refunded through 2026, so they're not recommended). Hypercharge is a straight coin buy outside events.",
+    "gadget": { "coins": 1000 },
+    "star_power": { "coins": 2000 },
+    "gear": { "coins": 1000 },
+    "hypercharge": { "coins": 5000 },
+    "buffie": { "power_points": 2000, "coins": 1000 }
+  },
+
+  "new_brawler_credits": {
+    "_comment": "Starr Road credit cost to unlock a brawler, keyed by the reference `rarity` name. Approximate/balance-sensitive.",
+    "Common": 10,
+    "Rare": 10,
+    "Super Rare": 50,
+    "Epic": 170,
+    "Mythic": 430,
+    "Legendary": 860
+  },
+
+  "power_gates": {
+    "_comment": "Power level at which each purchase typically becomes available. Advisory only — surfaced as a 'requires Power N' note and used to fold the power-upgrade cost into a gated item's cost; never a hard filter.",
+    "gadget": 7,
+    "gear": 8,
+    "star_power": 9,
+    "hypercharge": 11
+  },
+
+  "impact_priors": {
+    "_comment": "0..1 prior for how much win-rate a purchase kind unlocks, multiplied by the brawler's meta strength to rank. A first gadget/star power is build-defining; a second is flexibility (only one star power equips at a time), so it's valued lower. Tunable.",
+    "gadget_first": 0.85,
+    "gadget_second": 0.45,
+    "star_power_first": 0.90,
+    "star_power_second": 0.40,
+    "gear": 0.55,
+    "hypercharge": 0.80,
+    "buffie": 0.50,
+    "new_brawler": 0.70
+  },
+
+  "hypercharge_availability": {
+    "_comment": "Which brawlers have a hypercharge to buy. The API can't tell 'no hypercharge exists' from 'exists, not owned', and no catalog lists them. mode 'all_except' treats every Power-11 brawler as eligible unless named in `list` (matches the ~all-brawlers-have-one reality as of 2026, and only fires at Power 11 so a brand-new HC-less brawler is unlikely to trip it); flip to mode 'only' with an explicit `list` for conservative, under-covering behavior. Maintain from release notes.",
+    "mode": "all_except",
+    "list": []
+  }
+}

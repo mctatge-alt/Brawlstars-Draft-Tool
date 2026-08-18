@@ -36,8 +36,18 @@ DEFAULT_PREF = 0.5
 # best fixed candidate (beat the old weights in 200/200 bootstrap resamples, within .0005
 # AUC of the linear refit ceiling). Per-map/mode weighting was re-tested and is still no
 # better than these global weights, so they stay fixed.
+#
+# mastery/personal are NOT part of that ablation — it tunes only the objective signals
+# (map/model/counter/synergy/role; see docs/model-evaluation.md). They personalize the
+# roster seat, and only apply when a roster is loaded. Cut 2026-08-17 (mastery .25 -> .10,
+# personal .20 -> .08): at the old values these two "how good is THIS player on it" signals
+# were ~31% of a personalized pick's score (~37% before any enemy is drafted) — out-driving
+# the model and outweighing `counter`, so the board over-recommended brawlers the player had
+# already mastered and buried meta picks they could grow into. Now a nudge, not a driver
+# (~15% combined). Product knobs (no accuracy claim); tune freely — a per-seat meta / my-roster
+# toggle is the planned next step.
 DEFAULT_WEIGHTS = {"map": 0.25, "model": 0.40, "counter": 0.20, "synergy": 0.05, "role": 0.10,
-                   "mastery": 0.25, "personal": 0.20}
+                   "mastery": 0.10, "personal": 0.08}
 
 
 @dataclass

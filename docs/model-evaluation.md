@@ -5,6 +5,15 @@ learned **model** (win-prob net), pairwise **synergy** with allies, **counter** 
 enemies, mode-based **role** fit, and player-specific **mastery**/**personal** history. The
 first four are combined with fixed global weights ([`DEFAULT_WEIGHTS`](../backend/bsdraft/engine/scoring.py)).
 
+**Personalization weights are product judgment, not ablation output.** `mastery` and `personal`
+apply only on a loaded roster seat; the ablation below never scores them. On **2026-08-17** they
+were cut (`mastery .25 → .10`, `personal .20 → .08`): at the old values the two "how good is
+*this* player on it" terms were ~31% of a personalized pick's score (~37% before any enemy is
+drafted), out-driving the model and outweighing `counter` — so the board over-ranked
+already-mastered brawlers and buried meta picks the player could improve into. They're now a
+nudge (~15% combined), not a driver. No accuracy claim rides on them; tune freely — a per-seat
+*meta / my-roster* toggle is the planned next step. Guarded by `backend/tests/test_scoring.py`.
+
 This doc records the held-out ablation that tunes those weights. It has been run twice —
 June 2026 on ~40k matches, and **August 2026 on ~995k matches** — and the headline finding
 **reversed** between runs as the dataset grew 25×.

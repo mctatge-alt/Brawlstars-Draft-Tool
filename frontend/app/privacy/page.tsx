@@ -15,6 +15,7 @@ export default function Privacy() {
         <span className="brand-gradient text-[14px] mr-2">BRAWL DRAFT</span>
         <div className="flex flex-wrap gap-x-1 ml-auto mono text-[11px] uppercase tracking-[0.06em]">
           <a href="/" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">Draft board</a>
+          <a href="/purchases" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">Upgrades</a>
           <a href="/guide" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">Draft guide</a>
           <a href="/how-it-works" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">How it works</a>
           <a href="/faq" className="px-2.5 py-1.5 border border-transparent text-[var(--muted)] hover:text-[var(--text)] ctl">FAQ</a>

@@ -6,6 +6,7 @@ export type Content = { title: string; intro: string; sections: Section[] };
 // Site-wide nav for the written pages. The board lives at "/", so it leads.
 const NAV = [
   { href: "/", label: "Draft board" },
+  { href: "/purchases", label: "Upgrades" },
   { href: "/guide", label: "Draft guide" },
   { href: "/how-it-works", label: "How it works" },
   { href: "/faq", label: "FAQ" },

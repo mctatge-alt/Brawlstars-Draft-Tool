@@ -17,7 +17,8 @@ engine fuses the model with empirical stats built at startup from the same match
 - `data/` — reference loaders, encoders, dataset builder, runtime release sync in `data/sync.py`.
 - `models/` — train (`winprob.py`) + serve (`serve.py`).
 - `engine/` — the draft brain. `engine/state.py`'s `DraftState` is the object threaded
-  through nearly everything. Core: `scoring.py` / `search.py` / `stats.py` / `mastery.py` /
+  through nearly everything. Core: `engine.py` (the `DraftEngine` facade) / `scoring.py`
+  (pick scoring) / `bans.py` (ban valuation) / `stats.py` / `mastery.py` /
   `personal.py`. Also: `playerrank.py` (tier resolution + rank index), `tiers.py`
   (Diamond/Masters bracket labels), `stats_store.py` (loads the precomputed stats artifact),
   `rank_store.py` (loads the precomputed rank-index artifact into a compact NumPy lookup),
@@ -53,12 +54,51 @@ engine fuses the model with empirical stats built at startup from the same match
    board as it stands: the net is trained on masked comps, so partial teams are first-class
    inputs (`supports_partial`), with a legacy top-meta completion fallback for old artifacts.
 
+## Bans are valued, not ranked by threat
+
+`engine/bans.py` answers a different question from `scoring.py`. A pick is scored on how good
+the brawler is; a ban is scored on **what removing it costs**, which depends on the rest of the
+ban set — so the list re-ranks as your teammates ban, and a brawler's own numbers never change.
+Three things drive it, none of which a threat table can express:
+
+- **Substitutes absorb a ban.** Denial is measured as the drop in a side's *soft maximum* over
+  every comp the pool can still field, weighted by the odds that side ends up holding all three.
+  Brawlers covering the same job rarely appear in a strong comp together, so each holds only part
+  of the mass and neither is expensive to lose — until one is banned and the survivor inherits it.
+- **Bans are global, so who picks first matters.** Draft order gives the odds each brawler lands
+  on their side or ours. `ban_value = deny(them) − SELF_COST_W · deny(us)`; a brawler the draft
+  hands *us* is advice about our pick, so it drops below every real ban and is flagged
+  `self_deny` (still returned, so an obvious threat is never silently missing).
+- **Roster.** A brawler we can't field can never be one of our picks, so banning it costs nothing.
+- **Their three bans are never visible in time.** You only ever see your two teammates' bans
+  before choosing, so all three enemy bans stay priced as unseen for the whole phase (and the
+  list can only re-rank twice per draft). Each brawler's holding odds are scaled by the odds it
+  survives them: their comps get built from the board that will actually exist, and a brawler
+  they were always going to ban carries almost no weight for either side — so spending our ban
+  on it comes out worthless without a rule saying so, and the ban they *aren't* making rises.
+
+Two deliberate constraints. **No argmax anywhere** — a projected draft line ("take the best, then
+the next best") is a step function whose flipped picks cascade into wholly different boards; it
+reads as sophisticated and behaves like a coin toss, so everything aggregates over comps instead.
+And it needs a **partial-draft artifact**: every quantity is a comp or a lone brawler read against
+an *unknown* board, which is what the mask row scores and a legacy export cannot express at all —
+those keep the old threat ordering (`ban_value: null`) rather than a half-built version of this.
+
+**This is the one part of the engine with no ground truth.** Supercell's battle log has no ban
+field, so unlike `DEFAULT_WEIGHTS` nothing here is fit to held-out matches. The constants are
+priors chosen for behavior on live maps, not tuned parameters — treat them as such when editing.
+
 ## The two recommend endpoints are intentionally distinct
 
 `/api/recommend` personalizes to the player's roster + history (mastery, personal win-rate),
 while `/api/top_picks` is the pure population meta — every brawler at a full loadout,
-**no roster filtering**. (Mastery is loadout-forward and power-neutral — Ranked normalizes
-every brawler to power 11.)
+**no roster filtering**. Mastery is loadout-forward — it ranks *investment* (which star powers /
+gadgets / gears / buffies you own, plus comfort), not power level. Power is enforced separately as
+a hard **fieldability gate**: Ranked doesn't normalize brawlers to a fixed power, and each bracket
+blocks selecting a brawler below a floor (Power 9 through Diamond, Power 11 from Mythic up), so
+`_roster_for` drops owned brawlers under `tiers.min_power_for_bracket(bracket)` before they're ever
+scored — an un-maxed brawler you can't field in Legendary must not be recommended. The season's
+free "boosted" brawlers arrive at Power 11 and are folded in after the gate.
 
 ## See also
 

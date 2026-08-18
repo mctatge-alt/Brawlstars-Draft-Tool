@@ -19,6 +19,18 @@ _RANGES = [
 BRACKETS: List[str] = [name for _, _, name in _RANGES]   # low → high, for ordered display
 _SUB = ["I", "II", "III"]
 
+# Ranked does NOT normalize brawlers to a fixed power — they play at their real level, and each
+# bracket *hard-blocks* selecting a brawler below a per-brawler floor: Power 9 through Diamond,
+# Power 11 from Mythic up. (The season's free "boosted" brawlers arrive at Power 11, so they clear
+# any floor.) So an owned brawler below the floor is unfieldable in that bracket, not merely weaker.
+_P11_BRACKETS = frozenset({"Mythic", "Legendary", "Masters", "Pro"})
+
+
+def min_power_for_bracket(bracket: Optional[str]) -> int:
+    """Lowest Power Level a brawler can be *selected* at in this bracket's draft — below it the game
+    makes it unavailable. 11 from Mythic up, 9 below; unknown bracket → the universal Ranked floor (9)."""
+    return 11 if bracket in _P11_BRACKETS else 9
+
 
 def bracket_of_tier(tier: int) -> Optional[str]:
     for lo, hi, name in _RANGES:

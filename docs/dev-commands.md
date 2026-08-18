@@ -73,5 +73,40 @@ local uvicorn. To test local backend changes in-browser, override
 `NEXT_PUBLIC_API_BASE=http://localhost:8000`. The var is inlined at build time for the
 static export.
 
+### Roster/personalization can't be tested in local dev (as of 2026-08-13)
+
+Anything gated on a loaded roster — the "I'm pick" seat checkboxes, owned-item filtering in the
+loadout popover, mastery weighting — is **dead on `localhost:3000`** and must be verified against
+the deployed site. `npm run dev` shows `⚠ roster service is down — personalization is off`.
+
+Why: `getRoster`/`getRank` go to `NEXT_PUBLIC_ROSTER_BASE`, which falls back to
+`NEXT_PUBLIC_API_BASE` (Render) when unset — and Render has no Supercell token, so it can only
+ever answer `loaded:false`. Setting `NEXT_PUBLIC_ROSTER_BASE=https://roster.brawldraft.com`
+does **not** fix it: `CORS_ORIGINS` in `com.bsdraft.api.plist` is deliberately locked to the
+three prod origins, so the browser gets no `access-control-allow-origin` and the fetch throws.
+Verify with:
+
+```bash
+curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" "https://roster.brawldraft.com/api/roster?tag=YOURTAG" | grep -i access-control
+```
+
+If you later want this working locally, in preference order:
+
+1. **Second local-only API** (keeps the public surface untouched — preferred). Run a second
+   uvicorn bound to loopback with open CORS, and point dev at it. `.claude/launch.json` already
+   has a `frontend-local-api` config aimed at port 8099 for roughly this.
+   ```bash
+   CORS_ORIGINS='*' PYTHONPATH=backend .venv/bin/uvicorn bsdraft.api.main:app --host 127.0.0.1 --port 8099
+   ```
+   then `NEXT_PUBLIC_ROSTER_BASE=http://127.0.0.1:8099` in `frontend/.env.local`. Same machine,
+   same key, so rosters load fully. Don't expose 8099 through the tunnel.
+2. **Add `http://localhost:3000` to `CORS_ORIGINS`** in `com.bsdraft.api.plist`, then
+   `launchctl bootout` + `bootstrap` (a plist edit — `kickstart -k` won't re-read it; see
+   [../deploy/roster-tunnel.md](../deploy/roster-tunnel.md)). One line, no extra process, but it
+   widens a *public* endpoint: any page served from `localhost:3000` on anyone's machine could
+   then read rosters from the browser.
+3. **Next.js dev rewrite** proxying `/roster-api/*` → the tunnel, making it same-origin. Avoids
+   both, but puts a dev-only path in committed `next.config`.
+
 Ads are shipped dark (env-gated) — read [adsense-go-live.md](adsense-go-live.md) before
 touching `AdSlot.tsx`, `ads.txt`, or enabling AdSense.

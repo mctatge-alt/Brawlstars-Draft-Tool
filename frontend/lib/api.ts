@@ -15,6 +15,12 @@ export type PickRec = {
 export type BanRec = {
   brawler_id: number; name: string; cls: string; threat: number;
   map_winrate: number; use_rate: number; confidence: number;
+  // Projected swing in your win probability from banning this brawler, given everything already
+  // banned and who picks first — the sort key. Null when the backend has no model to project
+  // with, where the list falls back to raw threat order.
+  ban_value: number | null;
+  replacement: string | null;   // who the enemy builds around instead
+  self_deny: boolean;           // the draft projects this brawler onto *your* side
 };
 export type Warning = { text: string; severity: string };
 export type RoleTip = { name: string; cls: string; role: string };
@@ -35,6 +41,9 @@ export type OwnedBrawler = {
   // Specific items the player owns on this brawler — populated by /api/roster (empty on the
   // recommend path). Used to restrict loadout suggestions on the user's own pick to what they have.
   owned_star_powers: number[]; owned_gadgets: number[]; owned_gears: OwnedGear[];
+  // Progression state for the purchase advisor (populated by /api/roster; absent on the recommend
+  // path). Optional so older backends / the recommend payload still type-check.
+  power?: number; has_hypercharge?: boolean; buffies_have?: number; buffies_total?: number;
 };
 export type RosterResponse = {
   loaded: boolean; tag: string; name: string; owned: OwnedBrawler[]; error?: string | null;
@@ -48,6 +57,21 @@ export type LoadoutItem = {
 export type LoadoutResponse = {
   brawler_id: number; brawler_name: string; cls: string; mode: string;
   gadgets: LoadoutItem[]; star_powers: LoadoutItem[]; gears: LoadoutItem[]; note: string;
+};
+
+export type PurchaseKind =
+  "power_upgrade" | "gadget" | "star_power" | "gear" | "hypercharge" | "buffie" | "new_brawler";
+export type PurchaseRec = {
+  brawler_id: number; brawler_name: string; kind: PurchaseKind;
+  value_score: number; meta_winrate: number;
+  confidence: "measured" | "heuristic" | "eligibility_only";
+  cost: Record<string, number>;              // e.g. { coins: 2000, power_points: 890 }
+  rationale: string;
+  item_id: number | null; item_name: string | null; target_power: number | null;
+  item_delta: number | null; gate: string | null;
+};
+export type PurchasesResponse = {
+  tag: string; name: string; scope: string; recommendations: PurchaseRec[];
 };
 
 export type RankInfo = {
@@ -146,6 +170,21 @@ export async function recommend(body: RecommendBody): Promise<RecommendResponse>
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`recommend: ${res.status}`);
+  return res.json();
+}
+
+export async function getPurchases(
+  roster: OwnedBrawler[], tag?: string | null, name?: string | null, top = 24,
+): Promise<PurchasesResponse> {
+  // Scored on API_BASE (holds the stats + item win-rate table); the roster was fetched from
+  // ROSTER_BASE (the keyed tunnel) and is POSTed here, mirroring the recommend path — the public
+  // backend can't fetch a roster itself (IP-locked out of Supercell).
+  const res = await fetch(`${API_BASE}/api/purchases`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ roster, tag: tag || null, name: name || null, top }),
+  });
+  if (!res.ok) throw new Error(`purchases: ${res.status}`);
   return res.json();
 }
 

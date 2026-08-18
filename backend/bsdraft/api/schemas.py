@@ -22,6 +22,12 @@ class OwnedBrawler(BaseModel):
     owned_star_powers: List[int] = []
     owned_gadgets: List[int] = []
     owned_gears: List[OwnedGear] = []
+    # Progression state the purchase advisor needs to know what's still unbought. Defaulted so the
+    # recommend path (which omits them) still validates; populated by /api/roster from Mastery.
+    power: int = 0
+    has_hypercharge: bool = False
+    buffies_have: int = 0
+    buffies_total: int = 0
 
 
 class RecommendRequest(BaseModel):
@@ -66,10 +72,16 @@ class BanRec(BaseModel):
     brawler_id: int
     name: str
     cls: str
-    threat: float
+    threat: float                        # standalone map threat (win-rate + how contested)
     map_winrate: float
     use_rate: float
     confidence: float
+    # Projected swing in our win probability if this brawler is banned, given everything already
+    # banned and who picks first — the sort key. None when there's no model to project with, in
+    # which case the list falls back to raw threat order. See engine/bans.py.
+    ban_value: Optional[float] = None
+    replacement: Optional[str] = None    # who slides into the pick slot this ban vacates
+    self_deny: bool = False              # the projection has us taking this brawler ourselves
 
 
 class Warning(BaseModel):
@@ -200,6 +212,39 @@ class LoadoutResponse(BaseModel):
     star_powers: List[LoadoutItem] = []
     gears: List[LoadoutItem] = []
     note: str = ""
+
+
+class PurchaseRequest(BaseModel):
+    """A player's ownership snapshot (fetched by the client from the keyed roster tunnel) to rank
+    next purchases against. The public backend can't fetch the roster itself (IP-locked out of
+    Supercell), so the client bridges it here — the same pattern as ``RecommendRequest.roster``."""
+    roster: List[OwnedBrawler] = []
+    tag: Optional[str] = None
+    name: Optional[str] = None
+    top: int = 20
+
+
+class PurchaseRec(BaseModel):
+    brawler_id: int
+    brawler_name: str
+    kind: str                    # power_upgrade|gadget|star_power|gear|hypercharge|buffie|new_brawler
+    value_score: float           # the sort key: meta strength × purchase impact (+ measured edge)
+    meta_winrate: float          # the brawler's smoothed win rate across ranked maps
+    confidence: str              # "measured" | "heuristic" | "eligibility_only"
+    cost: Dict[str, int] = {}    # fixed price, e.g. {"coins": 2000} — context only (balances unknowable)
+    rationale: str = ""
+    item_id: Optional[int] = None
+    item_name: Optional[str] = None
+    target_power: Optional[int] = None   # power level a gate implies, e.g. 11 for a hypercharge
+    item_delta: Optional[float] = None   # measured win-rate edge when confidence == "measured"
+    gate: Optional[str] = None           # e.g. "requires Power 9"
+
+
+class PurchasesResponse(BaseModel):
+    tag: str = ""
+    name: str = ""
+    scope: str = "ranked"        # recommendations are meta-valued across the ranked map pool
+    recommendations: List[PurchaseRec] = []
 
 
 class RankResponse(BaseModel):

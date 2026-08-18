@@ -50,16 +50,19 @@ class Mastery:
 
     @property
     def score(self) -> float:
-        # Ranked normalizes every brawler to power 11, so the *power level* doesn't affect
-        # in-match strength — what the player actually controls is the loadout (you can only
-        # equip the star powers / gadgets / gears / buffies you own) and how much they've
-        # played the brawler. So the investment score is loadout-forward, comfort second, and
-        # power is deliberately left out (a maxed but under-built brawler is still under-built).
+        # This ranks *investment* among brawlers the player can actually field. Power level is left
+        # out on purpose: a brawler below the bracket's power floor is unselectable and gets dropped
+        # upstream (see ``tiers.min_power_for_bracket`` / the API's ``_roster_for``), so it never
+        # reaches this scorer; among those that do, what the player controls is the loadout (you can
+        # only equip the star powers / gadgets / gears / buffies you own) and how much they've played
+        # it. So the score is loadout-forward, comfort second (a maxed but under-built brawler is
+        # still under-built). (The Power 9–10 window that survives the floor below Mythic isn't
+        # modelled here — the dataset's win rates already fold real power in.)
         return max(0.0, min(1.0, 0.60 * self.build + 0.40 * self.comfort))
 
     def gaps(self) -> List[str]:
-        # Power level is intentionally omitted: Ranked maxes it to 11, so it's never a real gap
-        # there — only the owned loadout is.
+        # Power level isn't a gap here: an under-floor brawler is unfieldable and filtered out before
+        # scoring, so anything that reaches this list clears the floor. Only the owned loadout remains.
         out: List[str] = []
         if not self.has_starpower:
             out.append("no star power")
