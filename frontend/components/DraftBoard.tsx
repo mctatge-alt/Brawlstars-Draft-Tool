@@ -349,7 +349,8 @@ function GearSection({ gears, isMySeat, ownedGears }: {
         <div className="mt-2">
           <div className="label mb-0.5">GEARS · YOURS</div>
           {enriched.map(({ og, g }) => (
-            <ItemRow key={og.id} it={{ name: og.name, effect: g?.effect, description: g?.description }}
+            <ItemRow key={og.id}
+              it={{ name: og.name, effect: g?.effect, description: g?.description, comp_why: g?.comp_why }}
               marked={bestNames.has(og.name)} tag={`Lv${og.level}`} />
           ))}
         </div>
@@ -366,7 +367,9 @@ function GearSection({ gears, isMySeat, ownedGears }: {
   return (
     <div className="mt-2">
       <div className="label mb-0.5">GEARS</div>
-      {gears.filter((g) => g.recommended).map((g) => <ItemRow key={g.name} it={g} marked />)}
+      {gears.filter((g) => g.recommended).map((g) => (
+        <ItemRow key={g.name} it={g} marked compFlip={!!g.comp_flipped} />
+      ))}
     </div>
   );
 }

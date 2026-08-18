@@ -218,6 +218,108 @@ def test_comp_overlay_dedupes_and_ignores_self():
     assert adv["comp_reads"] == []          # self filtered -> one real enemy -> nothing fires
 
 
+def test_cc_kit_overrides_correct_the_scan():
+    # Audit corrections (2026-08-18): Carl/Janet's control keywords describe SELF-movement — denied;
+    # Frank's pull and Sandy's sleep are real CC the first-match-wins scan bucketed elsewhere — added.
+    cc = L._cc_kit_ids()
+    assert R.brawler_by_name("Carl").id not in cc
+    assert R.brawler_by_name("Janet").id not in cc
+    assert R.brawler_by_name("Frank").id in cc
+    assert R.brawler_by_name("Sandy").id in cc
+    assert R.brawler_by_name("Darryl").id in cc          # scan-flagged, audit-confirmed (Tar Barrel)
+
+
+def test_cc_heavy_fires_only_on_full_cc_team():
+    # cc_heavy thresholds at 3 (the corrected CC-kit base rate is ~54% of the roster, so 2-of-3
+    # would fire in most drafts): all three enemies must carry CC kits.
+    cc3 = sorted(L._cc_kit_ids())[:3]
+    non_cc = next(b.id for b in R.load_brawlers() if b.id not in L._cc_kit_ids())
+    assert "cc_heavy" in L._comp_overlay(cc3)["fired"]
+    assert "cc_heavy" not in L._comp_overlay(cc3[:2] + [non_cc])["fired"]
+
+
+def test_cc_heavy_requires_the_whole_enemies_list():
+    # The read means "the FULL enemy team carries CC" — a hand-crafted longer list (the public
+    # endpoint accepts up to 5 ids) must not fire it at 3-of-4+, or the full-team threshold's
+    # base-rate rationale collapses.
+    cc3 = sorted(L._cc_kit_ids())[:3]
+    non_cc = next(b.id for b in R.load_brawlers() if b.id not in L._cc_kit_ids())
+    assert "cc_heavy" in L._comp_overlay(cc3)["fired"]
+    assert "cc_heavy" not in L._comp_overlay(cc3 + [non_cc])["fired"]
+
+
+def _synthetic_gear_guide():
+    return {"note": "", "gears": [
+        {"name": "Alpha", "effect": "a", "description": "", "base": 0.60},
+        {"name": "Mid", "effect": "m", "description": "", "base": 0.58},
+        {"name": "Bumped", "effect": "b", "description": "", "base": 0.55, "vs": {"tanky": 0.10}},
+    ]}
+
+
+def test_gear_comp_flip_is_flagged(monkeypatch):
+    # A gear that cracks the top-2 only because of its comp offset carries comp_flipped — the same
+    # contract as the accessory ★ PICK · COMP badge.
+    monkeypatch.setattr(L, "_gear_guide", _synthetic_gear_guide)
+    comp = L._comp_overlay(_ids_by_class("Tank", 2))          # tanky (and aggro) fire
+    gears = {g["name"]: g for g in L._gear_items("Tank", "Gem Grab", 16000000, None, comp)}
+    assert gears["Bumped"]["recommended"] is True and gears["Bumped"]["comp_flipped"] is True
+    assert gears["Alpha"]["recommended"] is True and gears["Alpha"]["comp_flipped"] is False
+    assert gears["Mid"]["recommended"] is False               # displaced by the comp pick
+    # And without a comp: the blind top-2, nothing flagged.
+    blind = {g["name"]: g for g in L._gear_items("Tank", "Gem Grab", 16000000, None, None)}
+    assert blind["Bumped"]["recommended"] is False
+    assert all(g["comp_flipped"] is False for g in blind.values())
+
+
+def test_gear_comp_cannot_launder_measured_negative(monkeypatch):
+    # A gear measured WORSE than its siblings (base fit <= 0.5) competes at its base fit: the comp
+    # bump must not push it into the recommended top-2 — mirror of the accessory rank cap.
+    monkeypatch.setattr(L, "_gear_guide", lambda: {"note": "", "gears": [
+        {"name": "Good", "effect": "g", "description": "", "base": 0.55},
+        {"name": "Mid", "effect": "m", "description": "", "base": 0.50},
+        {"name": "Bad", "effect": "b", "description": "", "base": 0.40, "vs": {"tanky": 0.15}},
+    ]})
+    bid = 16000000
+    table = {"version": 1, "meta": {"gear_ids_by_name": {"bad": 999}}, "brawler_baseline": {},
+             "cells": {f"{bid}:999": {"item_type": "gear", "delta": -0.03, "significant": 1,
+                                      "item_winrate": 0.47, "n_eff": 240, "n_players": 61,
+                                      "n_eff_rest": 300}}}
+    comp = L._comp_overlay(_ids_by_class("Tank", 2))
+    gears = {g["name"]: g for g in L._gear_items("Tank", "Gem Grab", bid, table, comp)}
+    assert gears["Bad"]["source"] == "winrate" and gears["Bad"]["comp_delta"] > 0
+    assert gears["Bad"]["recommended"] is False               # rank-capped at its measured base fit
+    assert gears["Good"]["recommended"] is True and gears["Mid"]["recommended"] is True
+
+
+def test_malformed_gear_vs_degrades_not_errors(monkeypatch):
+    # The gear guide's fail-safe contract extends to junk `vs` values: null, strings, and non-dict
+    # shapes contribute nothing rather than 500ing the comp-aware endpoint.
+    monkeypatch.setattr(L, "_gear_guide", lambda: {"note": "", "gears": [
+        {"name": "NullVs", "effect": "x", "description": "", "base": 0.50, "vs": {"tanky": None}},
+        {"name": "StrVs", "effect": "x", "description": "", "base": 0.50, "vs": {"tanky": "lots"}},
+        {"name": "NonDict", "effect": "x", "description": "", "base": 0.50, "vs": "tanky"},
+        {"name": "BadBase", "effect": "x", "description": "", "base": "junk", "modes": 7},
+    ]})
+    comp = L._comp_overlay(_ids_by_class("Tank", 2))
+    gears = {g["name"]: g for g in L._gear_items("Tank", "Gem Grab", 16000000, None, comp)}
+    assert all(g["comp_delta"] == 0.0 and g["comp_why"] == [] for g in gears.values())
+    assert gears["BadBase"]["fit"] == pytest.approx(0.4)      # junk base -> default prior, no crash
+
+
+def test_gear_comp_offsets_from_vs_dict():
+    # Gears extend the curated additive idiom with a sparse per-gear "vs" dict: fired reads sum
+    # into the fit (clamped), recorded on comp_delta with signed chips — same contract as
+    # accessories. Gears without a matching "vs" key stay untouched.
+    marks = _ids_by_class("Marksman", 2)
+    b = R.brawler_by_name("Shelly")
+    blind = {g["name"]: g for g in L.loadout_advice(b.id, "Knockout")["gears"]}
+    comp = {g["name"]: g for g in L.loadout_advice(b.id, "Knockout", enemies=marks)["gears"]}
+    assert comp["Health"]["comp_delta"] > 0 and comp["Health"]["comp_why"]      # vs: poke
+    assert comp["Health"]["fit"] - comp["Health"]["comp_delta"] == pytest.approx(blind["Health"]["fit"])
+    assert comp["Gadget Charge"]["comp_delta"] == 0.0                            # no "vs" entry
+    assert comp["Gadget Charge"]["fit"] == blind["Gadget Charge"]["fit"]
+
+
 def test_mark_best_no_flip_when_winner_unchanged():
     a = {"name": "A", "kind": "gadget", "fit": 0.80, "comp_delta": 0.05, "comp_flipped": False,
          "recommended": False, "source": "heuristic", "why": "Sustain: survive."}

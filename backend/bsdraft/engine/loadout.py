@@ -96,10 +96,28 @@ _COMP_EFFECT = {
     "tanky": {"damage": 0.10, "control": 0.04},
     # 2+ Marksman/Controller/Artillery: close the gap or dodge — mobility and sustain to survive poke.
     "poke": {"mobility": 0.08, "sustain": 0.06},
+    # ALL enemies carry CC in their gadget/SP kits: escape and sustain to survive the lock-down.
+    "cc_heavy": {"mobility": 0.06, "sustain": 0.04},
 }
-_COMP_CHIP = {"aggro": "vs dive", "tanky": "vs tanks", "poke": "vs poke"}
+_COMP_CHIP = {"aggro": "vs dive", "tanky": "vs tanks", "poke": "vs poke", "cc_heavy": "vs CC"}
 _COMP_READ_LABEL = {"aggro": "dive-heavy ({n} Tank/Assassin)", "tanky": "{n} Tanks",
-                    "poke": "poke-heavy ({n} ranged)"}
+                    "poke": "poke-heavy ({n} ranged)", "cc_heavy": "CC-heavy kits ({n})"}
+# Fire thresholds per read. Class reads fire at 2-of-3. cc_heavy needs the FULL enemy team:
+# the 2026-08-18 kit audit put the corrected CC-kit base rate at ~54% of the roster, so a >=2
+# threshold would fire in over half of all drafts — a near-constant, not a signal.
+_COMP_READ_MIN = {"aggro": 2, "tanky": 2, "poke": 2, "cc_heavy": 3}
+
+# Corrections to the keyword scan behind _cc_kit_ids, from a full-roster audit of every gadget/SP
+# description (2026-08-18; item-level false-positive rate 8%). False: the control keyword refers to
+# the brawler moving ITSELF. True: real enemy CC the first-match-wins scan bucketed elsewhere
+# (mobility/damage/sustain won first) — pulls, knock-ups, silences, sleeps, hypnosis, zone slows.
+# Name-keyed: an unknown name silently falls back to the scan, so catalog renames degrade safely.
+_CC_KIT_OVERRIDES = {
+    "Carl": False, "Janet": False,
+    "Berry": True, "Bibi": True, "Bolt": True, "Bonnie": True, "Cordelius": True, "Draco": True,
+    "El Primo": True, "Finx": True, "Frank": True, "Gene": True, "Moe": True, "Ollie": True,
+    "Otis": True, "Pierce": True, "Sandy": True, "Sirius": True, "Wendy": True,
+}
 
 _TOKEN_RE = re.compile(r"<!.*?>")
 _WS_RE = re.compile(r"\s+")
@@ -108,6 +126,15 @@ _WS_RE = re.compile(r"\s+")
 def _clean(text: str) -> str:
     """Strip the catalog's unfilled ``<!card.value…>`` tokens and collapse whitespace."""
     return _WS_RE.sub(" ", _TOKEN_RE.sub("", text or "")).strip()
+
+
+def _num(x, default: float = 0.0) -> float:
+    """Defensive float for hand-curated guide values: junk (null, strings, wrong types) degrades to
+    the default rather than 500ing the endpoint — the gear guide's fail-safe contract."""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return default
 
 
 def _classify(description: str) -> str:
@@ -125,6 +152,18 @@ def _mode_fit(effect: str, mode: str) -> float:
 @lru_cache(maxsize=1)
 def _by_id() -> dict:
     return {b.id: b for b in R.load_brawlers()}
+
+
+@lru_cache(maxsize=1)
+def _cc_kit_ids() -> frozenset:
+    """Ids of brawlers whose gadget/SP kit offers real enemy-targeted CC: the control-bucket
+    keyword scan, corrected by the audited ``_CC_KIT_OVERRIDES``. Kits are static per process."""
+    out = set()
+    for b in R.load_brawlers():
+        has = any(_classify(a.description) == "control" for a in b.gadgets + b.star_powers)
+        if _CC_KIT_OVERRIDES.get(b.name, has):
+            out.add(b.id)
+    return frozenset(out)
 
 
 @lru_cache(maxsize=1)
@@ -152,16 +191,21 @@ def _comp_overlay(enemies: Optional[List[int]], self_id: Optional[int] = None) -
     hand-crafted ``enemies=<tank>,<tank>`` must not fire the >=2-threshold reads off one opponent.
     """
     byid = _by_id()
-    classes = [byid[e].cls
-               for e in dict.fromkeys(enemies or []) if e != self_id and e in byid]
-    if not classes:
+    ids = [e for e in dict.fromkeys(enemies or []) if e != self_id and e in byid]
+    if not ids:
         return None
+    classes = [byid[e].cls for e in ids]
     counts = {
         "aggro": sum(c in FRONTLINE for c in classes),
         "tanky": sum(c == "Tank" for c in classes),
         "poke": sum(c in RANGE for c in classes),
+        "cc_heavy": sum(e in _cc_kit_ids() for e in ids),
     }
-    fired = [k for k in _COMP_EFFECT if counts[k] >= 2]
+    # cc_heavy additionally requires the WHOLE list to be CC-kit brawlers: its semantics are "the
+    # full enemy team", and the public endpoint accepts up to 5 hand-crafted ids — 3-of-5 would
+    # recreate the near-constant-fire problem the full-team threshold exists to avoid.
+    fired = [k for k in _COMP_EFFECT
+             if counts[k] >= _COMP_READ_MIN[k] and (k != "cc_heavy" or counts[k] == len(ids))]
     bonus: dict = {}
     chips: dict = {}
     for read in fired:
@@ -170,16 +214,13 @@ def _comp_overlay(enemies: Optional[List[int]], self_id: Optional[int] = None) -
             chips.setdefault(eff, []).append(("+ " if d > 0 else "− ") + _COMP_CHIP[read])
     bonus = {e: max(-_COMP_CLAMP, min(_COMP_CLAMP, v)) for e, v in bonus.items()}
     reads = [_COMP_READ_LABEL[k].format(n=counts[k]) for k in fired]
-    return {"bonus": bonus, "chips": chips, "reads": reads}
+    return {"bonus": bonus, "chips": chips, "reads": reads, "fired": fired}
 
 
-def _apply_comp(item: dict, effect: str, overlay: Optional[dict]) -> None:
-    """Fold the enemy-comp adjustment into ``fit`` AFTER the measured overlay, recording the applied
+def _fold_comp(item: dict, adj: float, chips: List[str]) -> None:
+    """Fold a comp adjustment into ``fit`` AFTER the measured overlay, recording the applied
     (post-clamp01) delta so ``fit - comp_delta`` reconstructs the comp-blind fit exactly. ``why`` is
     never rewritten — the measured claim stays verbatim; the signed chips are the separate channel."""
-    if not overlay:
-        return
-    adj = overlay["bonus"].get(effect, 0.0)
     if not adj:
         return
     base = item["fit"]
@@ -187,7 +228,14 @@ def _apply_comp(item: dict, effect: str, overlay: Optional[dict]) -> None:
     item["comp_delta"] = round(new - base, 3)
     item["fit"] = round(new, 3)
     if abs(item["comp_delta"]) >= _COMP_CHIP_MIN:
-        item["comp_why"] = list(overlay["chips"].get(effect, []))
+        item["comp_why"] = list(chips)
+
+
+def _apply_comp(item: dict, effect: str, overlay: Optional[dict]) -> None:
+    """Accessory path: the comp adjustment for the item's effect bucket, from the overlay tables."""
+    if not overlay:
+        return
+    _fold_comp(item, overlay["bonus"].get(effect, 0.0), overlay["chips"].get(effect, []))
 
 
 def _apply_measured(item: dict, cell: dict) -> None:
@@ -268,13 +316,15 @@ def _mark_best(items: List[dict], mode: str) -> None:
         best["why"] = f"Best {best['kind'].replace('_', ' ')} fit for {mode} — {best['why'][0].lower()}{best['why'][1:]}"
 
 
-def _gear_items(cls: str, mode: str, brawler_id: int, itemstats: Optional[dict], top: int = 2) -> List[dict]:
+def _gear_items(cls: str, mode: str, brawler_id: int, itemstats: Optional[dict],
+                comp: Optional[dict] = None, top: int = 2) -> List[dict]:
     guide = _gear_guide()
     out: List[dict] = []
     for g in guide["gears"]:
-        base = float(g.get("base", 0.4))
-        fit = max(0.0, min(1.0, base + float(g.get("modes", {}).get(mode, 0.0))
-                           + float(g.get("roles", {}).get(cls, 0.0))))
+        modes = g.get("modes") if isinstance(g.get("modes"), dict) else {}
+        roles = g.get("roles") if isinstance(g.get("roles"), dict) else {}
+        fit = max(0.0, min(1.0, _num(g.get("base", 0.4), 0.4)
+                           + _num(modes.get(mode)) + _num(roles.get(cls))))
         name = g.get("name", "")
         item = {
             "id": None,
@@ -287,19 +337,47 @@ def _gear_items(cls: str, mode: str, brawler_id: int, itemstats: Optional[dict],
             "recommended": False,
             "why": (f"Situational — {g.get('effect','').lower()}." if g.get("effect") else "Situational."),
             "source": "curated",
+            "comp_delta": 0.0,
+            "comp_why": [],
+            "comp_flipped": False,
         }
         cell = IS.gear_cell(itemstats, brawler_id, name)
         if cell and cell.get("significant"):
             _apply_measured(item, cell)
+        # Comp offsets extend the curated additive idiom (base + modes + roles + vs): each gear may
+        # carry a sparse "vs" dict keyed by read keys; fired reads sum, clamped like the accessories.
+        if comp and comp["fired"]:
+            vs = g.get("vs") if isinstance(g.get("vs"), dict) else {}
+            adj = sum(_num(vs.get(k)) for k in comp["fired"])
+            adj = max(-_COMP_CLAMP, min(_COMP_CLAMP, adj))
+            chips = [("+ " if _num(vs.get(k)) > 0 else "− ") + _COMP_CHIP[k]
+                     for k in comp["fired"] if _num(vs.get(k))]
+            _fold_comp(item, adj, chips)
         out.append(item)
-    # Rank by final fit (measured deltas fold onto the same 0..1 scale); flag the top two as picks.
+
+    # Display order stays final-fit descending, but the top-two SELECTION uses the same measured
+    # arbitration as _mark_best: a measured-WORSE gear (comp-blind base fit <= 0.5) competes at its
+    # base fit, so a comp bump can never promote a gear its own measurement says loses to its
+    # siblings. A gear in the picks only because of the comp is flagged comp_flipped, mirroring the
+    # accessory contract.
+    def base_fit(it: dict) -> float:
+        return round(it["fit"] - it.get("comp_delta", 0.0), 3)
+
+    def rank(it: dict) -> float:
+        if it["source"] == "winrate" and base_fit(it) <= 0.5:
+            return base_fit(it)
+        return it["fit"]
+
     out.sort(key=lambda it: it["fit"], reverse=True)
-    for rank, item in enumerate(out):
-        if rank < top:
-            item["recommended"] = True
-            if item["source"] != "winrate":
-                item["why"] = (f"Core pick for {mode}" +
-                               (f" — {item['effect'].lower()}." if item["effect"] else "."))
+    aware = sorted(out, key=rank, reverse=True)[:top]
+    blind = sorted(out, key=base_fit, reverse=True)[:top]
+    for item in aware:
+        item["recommended"] = True
+        if not any(item is b for b in blind):
+            item["comp_flipped"] = True
+        if item["source"] != "winrate":
+            item["why"] = (f"Core pick for {mode}" +
+                           (f" — {item['effect'].lower()}." if item["effect"] else "."))
     return out
 
 
@@ -320,7 +398,7 @@ def loadout_advice(brawler_id: int, mode: str, map_id: Optional[int] = None,
     star_powers = [_advise_accessory(a, mode, b.id, itemstats, comp) for a in b.star_powers]
     _mark_best(gadgets, mode)
     _mark_best(star_powers, mode)
-    gears = _gear_items(b.cls, mode, b.id, itemstats)   # comp-blind: gear offsets are Phase 2
+    gears = _gear_items(b.cls, mode, b.id, itemstats, comp)
     measured = any(it["source"] == "winrate" for it in gadgets + star_powers + gears)
     note = ("Measured win rates where the sample is sufficient; effect-based fit otherwise."
             if measured else f"Effect-based fit for {mode} — not a live tier read yet.")

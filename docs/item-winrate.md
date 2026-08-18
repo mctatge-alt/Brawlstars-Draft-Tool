@@ -113,4 +113,24 @@ heuristic can never claim more than a strong measured signal (+5% ≡ +0.15 fit 
   not defaulted); junk CSV degrades silently; old clients/backends interoperate unchanged.
 - **Unvalidatable by construction** (logs never record the equipped item) — the table
   (`_COMP_EFFECT` in `engine/loadout.py`) is capped opinion, honestly labeled in `note`.
-  Gears stay comp-blind (curated offsets are Phase 2); the measured path here is unchanged.
+  The measured path here is unchanged.
+
+Phase 2 (2026-08-18) added two reads on top:
+
+- **`cc_heavy`** — fires when **all three** enemies carry real enemy-targeted CC in their
+  gadget/SP kits (`_cc_kit_ids`: the control-bucket keyword scan corrected by
+  `_CC_KIT_OVERRIDES`). The overrides come from a full-roster audit of every kit description
+  (item-level FP rate 8%): Carl/Janet denied (their "pull/push" moves themselves), 17 brawlers
+  added whose pulls/knock-ups/sleeps/silences the first-match-wins scan bucketed elsewhere
+  (Frank, Gene, Sandy, Ollie, El Primo, Finx…). Corrected base rate is ~54% of the roster —
+  which is why the threshold is the full team, not 2-of-3 (2-of-3 would fire in most drafts).
+  Overrides are name-keyed and degrade to the raw scan on unknown names. Re-run the audit when
+  the catalog refresh adds brawlers or reworks descriptions.
+- **Gear comp offsets** — `gears.json` gears may carry a sparse `"vs": {read: delta}` dict
+  (Shield vs `aggro`/`cc_heavy`, Damage vs `tanky`, Health/Speed vs `poke`), summed over fired
+  reads and clamped like the accessories, with the same `comp_delta`/chips/`comp_flipped`
+  contract: the top-two selection rank-caps measured-worse gears at their comp-blind base fit
+  (no comp laundering), and a gear in the picks only because of the comp is flagged. Junk `vs`
+  (or `base`/`modes`/`roles`) values degrade to zero/defaults per the guide's fail-safe contract.
+  `cc_heavy` fires strictly on the whole `enemies` list (a hand-crafted 5-id call can't fire it
+  at 3-of-5).
