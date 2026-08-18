@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import tempfile
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 
 from bsdraft.collect import boosted as B
@@ -188,7 +189,7 @@ def test_fingerprint_stable_and_content_sensitive():
 def _committed_at(doc):
     """Point both the scraper and the reference loader at a temp ranked_boosted.json."""
     old_b, old_r = B.BOOSTED_PATH, R.RANKED_BOOSTED_PATH
-    R.load_ranked_boosted.cache_clear()
+    R._ranked_boosted_doc.cache_clear()
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "ranked_boosted.json"
         if doc is not None:
@@ -198,7 +199,7 @@ def _committed_at(doc):
             yield p
         finally:
             B.BOOSTED_PATH, R.RANKED_BOOSTED_PATH = old_b, old_r
-            R.load_ranked_boosted.cache_clear()
+            R._ranked_boosted_doc.cache_clear()
 
 
 def test_has_changed_detects_new_rotation():
@@ -272,6 +273,28 @@ def test_reference_expired_valid_until_returns_empty():
 def test_reference_future_valid_until_is_active():
     with _committed_at({"valid_until": "2999-12-31", "active": {"brawlers": ["Berry"]}}):
         assert len(R.load_ranked_boosted()) == 1
+
+
+def test_reference_valid_until_expires_between_calls_despite_cache():
+    # The deployed API is kept warm for days, so the expiry guard must run per *call*, not per
+    # process: a rotation served fine on its last valid day must vanish the next morning without
+    # a restart. Only the file parse (_ranked_boosted_doc) may be cached.
+    class _FakeDate(date):
+        _today = date(2026, 8, 18)
+
+        @classmethod
+        def today(cls):
+            return cls._today
+
+    old_date = R.date
+    R.date = _FakeDate
+    try:
+        with _committed_at({"valid_until": "2026-08-18", "active": {"brawlers": ["Berry"]}}):
+            assert len(R.load_ranked_boosted()) == 1   # last valid day (inclusive) — still served
+            _FakeDate._today = date(2026, 8, 19)       # midnight passes; parse cache still warm
+            assert R.load_ranked_boosted() == ()       # expired — dropped without a restart
+    finally:
+        R.date = old_date
 
 
 def test_reference_skips_unknown_names():

@@ -150,6 +150,19 @@ def load_ranked_maps() -> tuple:
 
 
 @lru_cache(maxsize=1)
+def _ranked_boosted_doc() -> Optional[dict]:
+    """Parsed ``ranked_boosted.json``, or None when absent/unreadable. Only the file parse is
+    cached — the ``valid_until`` guard lives in :func:`load_ranked_boosted` and runs per call,
+    because the deployed API is deliberately kept warm for days: a process-start-only check would
+    keep serving an expired rotation long after the season flipped."""
+    if not RANKED_BOOSTED_PATH.exists():
+        return None
+    try:
+        return _load_json(RANKED_BOOSTED_PATH)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def load_ranked_boosted() -> tuple:
     """Brawler ids of the current season's Ranked **free / "boosted" brawlers** — the maxed
     brawlers everyone may use in Ranked regardless of ownership. Read from the committed
@@ -159,12 +172,11 @@ def load_ranked_boosted() -> tuple:
 
     Fail-safe (the list must never *mislead* — telling a player they can freely pick a brawler
     they actually can't is worse than showing none): returns ``()`` when the file is absent /
-    unreadable, when no name resolves, or when an optional ``valid_until`` date has passed."""
-    if not RANKED_BOOSTED_PATH.exists():
-        return ()
-    try:
-        doc = _load_json(RANKED_BOOSTED_PATH)
-    except (json.JSONDecodeError, OSError):
+    unreadable, when no name resolves, or when the optional ``valid_until`` date (the last day the
+    rotation is served, inclusive) has passed — re-checked on every call, see
+    :func:`_ranked_boosted_doc`."""
+    doc = _ranked_boosted_doc()
+    if doc is None:
         return ()
     valid_until = (doc.get("valid_until") or "").strip()
     if valid_until:
