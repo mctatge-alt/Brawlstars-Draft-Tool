@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from bsdraft.constants import BRAWLER_CLASSES
 from bsdraft.data import reference as R
 from bsdraft.engine.bans import BanScore
-from bsdraft.engine.scoring import PickScore, _class_of, score_candidate
+from bsdraft.engine.scoring import PickScore, _class_of, model_marginals, score_candidate
 from bsdraft.engine.state import DraftState
 from bsdraft.engine.stats import DraftStats
 from bsdraft.engine import bans as bans_mod
@@ -46,8 +46,12 @@ class DraftEngine:
     def recommend_picks(self, state: DraftState, top: int = 10, weights=None, roster=None,
                         personal=None) -> List[PickScore]:
         stats = self._stats_for(state)
-        scored = [score_candidate(state, c, stats, self.model, weights, roster, personal)
-                  for c in self.candidates(state, roster)]
+        cands = self.candidates(state, roster)
+        # One batched model pass over all candidates (they share the enemy team), then score.
+        # Bit-for-bit identical to computing each marginal inside score_candidate.
+        win_probs = model_marginals(state, cands, self.model, stats)
+        scored = [score_candidate(state, c, stats, self.model, weights, roster, personal, win_prob=wp)
+                  for c, wp in zip(cands, win_probs)]
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:top]
 

@@ -6,6 +6,20 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 ## 2026-08-18
 
+- **Recommendations now favor the specific map over the game mode.** The mode-archetype nudge
+  (e.g. Controllers in Gem Grab, Tanks in Brawl Ball) was quietly about as influential as real map
+  win-rates and applied the same on every map of a mode — so the same brawlers surfaced regardless
+  of the actual map. It's now scaled down by how much real data exists for that brawler on that
+  map: on well-played maps the pick follows the genuine win-rate, while freshly-rotated maps still
+  lean on the archetype guidance where there's no data yet. Brawlers no longer flat-top every map
+  of their mode.
+- **Faster analysis.** The recommend step is ~3.7× faster — the win-probability model now scores
+  every candidate in one batched pass instead of one at a time. Identical picks, just quicker.
+- **Press ` (backtick) to jump to your first pick.** A shortcut that skips straight to the first
+  pick slot — handy when there are only a few bans. Typing in the search box is unaffected.
+- **Clearer gear levels in the loadout popover.** Owned-gear tags now read "Lv n/3" with a hover
+  tooltip instead of a bare "Lv3," so it's obvious it's the gear's in-game upgrade level, not a
+  suggestion rank.
 - **Loadout advice now adjusts to the enemy comp.** The hover popover's gadget / star-power / gear
   picks were frozen at pick time; now the drafted enemy team feeds a bounded overlay: class-count
   reads (dive-heavy, 2 Tanks, poke-heavy) plus a CC-heavy read that fires when *every* enemy

@@ -84,6 +84,21 @@ def _class_of(brawler_id: int) -> str:
     return _class_map().get(brawler_id, "Unclassified")
 
 
+def _mean_wr(values: List[float]) -> float:
+    """Bit-for-bit ``statistics.mean`` for the tiny ally/enemy winrate lists averaged per
+    candidate. ``statistics.mean`` sums via exact ``Fraction``s — correct, but it was ~half of a
+    mid-draft recommend call. For n<=2 the plain float form is provably identical on these inputs:
+    a lone value is its own mean, and ``(a+b)/2`` is exact because halving a normal double never
+    rounds and winrates live in (0, 1) so ``a+b`` can't overflow. n>=3 keeps ``statistics.mean``,
+    where a sequential ``sum(...)/n`` would double-round and diverge."""
+    n = len(values)
+    if n == 1:
+        return values[0]
+    if n == 2:
+        return (values[0] + values[1]) / 2.0
+    return mean(values)
+
+
 def _complete_team(base: List[int], pool: List[int], size: int, exclude: set) -> List[int]:
     team = list(base)
     for bid in pool:
@@ -106,6 +121,26 @@ def role_fit(state: DraftState, cls: str) -> float:
     pref = MODE_CLASS_PREF.get(state.mode, {}).get(cls, DEFAULT_PREF)
     redundancy = [_class_of(b) for b in state.our_team].count(cls)
     return max(0.0, min(1.0, pref - 0.15 * redundancy))
+
+
+def model_marginals(state: DraftState, candidates: List[int], model, stats) -> List[Optional[float]]:
+    """Vectorized :func:`model_marginal` over a candidate list — one batched model call instead
+    of ~100 per-candidate ones. Every candidate shares the same enemy team and differs only by
+    the ally added to our side, so a partial-draft model scores them all in a single pass.
+
+    Bit-for-bit identical to ``[model_marginal(state, c, model, stats) for c in candidates]``:
+    the batched path goes through :meth:`WinProbModel.prob_marginals`, which reproduces each
+    board's per-candidate accumulation exactly. Falls back to the per-candidate loop for legacy
+    (non-partial) models — whose marginal completes each candidate's team differently — and for
+    any model lacking ``prob_marginals`` (e.g. a test double)."""
+    if model is None or not getattr(model, "available", False):
+        return [None] * len(candidates)
+    if getattr(model, "supports_partial", False) and hasattr(model, "prob_marginals"):
+        their = state.their_team[:TEAM_SIZE]
+        teams_a = [(state.our_team + [c])[:TEAM_SIZE] for c in candidates]
+        teams_b = [their] * len(candidates)
+        return model.prob_marginals(teams_a, teams_b, state.map_id, state.mode)
+    return [model_marginal(state, c, model, stats) for c in candidates]
 
 
 def model_marginal(state: DraftState, candidate: int, model, stats) -> Optional[float]:
@@ -131,22 +166,45 @@ def model_marginal(state: DraftState, candidate: int, model, stats) -> Optional[
     return model.prob(our, their, state.map_id, state.mode)
 
 
+_UNSET = object()  # sentinel: "no precomputed win_prob supplied" (distinct from a real None)
+
+
 def score_candidate(state: DraftState, candidate: int, stats, model=None, weights=None,
-                    roster=None, personal=None) -> PickScore:
+                    roster=None, personal=None, *, win_prob=_UNSET) -> PickScore:
     weights = weights or DEFAULT_WEIGHTS
     cls = _class_of(candidate)
 
     map_rate = stats.brawler_rate(candidate, state.map_id)
     synergy = (
-        mean(stats.synergy(candidate, a).winrate for a in state.our_team)
+        _mean_wr([stats.synergy(candidate, a).winrate for a in state.our_team])
         if state.our_team else None
     )
     counter = (
-        mean(stats.counter(candidate, e).winrate for e in state.their_team)
+        _mean_wr([stats.counter(candidate, e).winrate for e in state.their_team])
         if state.their_team else None
     )
     rfit = role_fit(state, cls)
-    win_prob = model_marginal(state, candidate, model, stats)
+    # Confidence-scale the role term toward neutral 0.5 by *this candidate's own* per-(brawler,
+    # map) map-data confidence. `role_fit` is a hand-set mode+class PRIOR (unvalidated by the
+    # ablation), so it should yield to real per-map outcomes where we have them and only speak up
+    # where the map cell is thin:
+    #   role_eff = 0.5 + (1 - conf) * (role_fit - 0.5),  conf = map_rate.confidence  (games/(games+PRIOR))
+    # On a well-sampled map cell (conf -> 1) role_eff -> 0.5 for *every* candidate: a constant that
+    # drops straight out of the ranking (renormalization keeps its weight, but a flat term can't
+    # re-order picks). On a zero/thin-data map (conf -> 0) role_eff -> the full archetype fit, so a
+    # freshly-rotated map still leans on the prior. This fixes role punching ~2.5x above its 0.10
+    # weight on the maps players actually see — its wide 0.5-0.9 spread vs map_wr's compressed
+    # ~0.47-0.59 band made a 0.10-weight heuristic co-equal (~29% of ranking spread) with the
+    # 0.25-weight *empirical* map signal, flat-topping mode-archetype brawlers (e.g. a Controller
+    # ranking ~#4 on every Gem Grab map regardless of its true per-map win-rate). Confidence is
+    # keyed per (brawler, map) — the same cell as map_wr — because role is a stand-in for *this
+    # brawler's* unobserved map performance, so it should retreat exactly as that brawler's own map
+    # sample fills in. Applies uniformly to blind first picks and mid-draft (map cell only; board
+    # state doesn't change map_rate), so both recommend paths get the treatment.
+    role_eff = 0.5 + (1.0 - map_rate.confidence) * (rfit - 0.5)
+    # `win_prob` may be precomputed by the batched recommender (model_marginals); otherwise
+    # fall back to the per-candidate marginal. A precomputed None (model off) is respected.
+    win_prob = model_marginal(state, candidate, model, stats) if win_prob is _UNSET else win_prob
 
     mastery_val: Optional[float] = None
     owned = True
@@ -171,7 +229,9 @@ def score_candidate(state: DraftState, candidate: int, stats, model=None, weight
             personal_games = pr.games
             personal_weight = weights.get("personal", 0.0) * pr.confidence
 
-    parts: Dict[str, tuple] = {"map": (map_rate.winrate, weights["map"]), "role": (rfit, weights["role"])}
+    # `parts["role"]` carries the confidence-scaled `role_eff` (what actually moves the score and
+    # shows in `breakdown`); the raw `role_fit` field below keeps the un-scaled archetype value.
+    parts: Dict[str, tuple] = {"map": (map_rate.winrate, weights["map"]), "role": (role_eff, weights["role"])}
     if synergy is not None:
         parts["synergy"] = (synergy, weights["synergy"])
     if counter is not None:

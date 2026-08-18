@@ -85,8 +85,11 @@ _MODE_EFFECT = {
 # thresholded at >=2 so a lone enemy pick fires nothing), each read contributing small per-effect
 # deltas shaped exactly like _MODE_EFFECT. Reads co-fire and sum; the total per effect is clamped
 # at ±_COMP_CLAMP — calibrated so the heuristic can never claim more than a strong measured signal
-# is worth (+5% measured win rate maps to +0.15 fit via _FIT_PER_DELTA). Class is the only
-# per-brawler attribute the reference carries, so the reads stay class-count coarse by design.
+# is worth (+5% measured win rate maps to +0.15 fit via _FIT_PER_DELTA). Class counts drive the
+# aggro/tanky/poke reads (class is the only playstyle attribute the reference carries); the Phase-2
+# cc_heavy read additionally inspects each enemy's gadget/SP KIT for control (via _cc_kit_ids). It
+# never models the enemy's *specific equipped* item — logs don't record that — so the reads stay
+# coarse (class counts + a has-CC-in-kit flag) by design, not a per-item enemy-loadout read.
 _COMP_CLAMP = 0.15
 _COMP_CHIP_MIN = 0.04   # below this applied delta, don't clutter the item with reason chips
 _COMP_EFFECT = {

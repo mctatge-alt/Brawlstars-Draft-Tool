@@ -121,6 +121,71 @@ def test_effect_recovery_positive_delta_is_significant(tmp_path):
     assert c1["item_type"] == "gadget"
 
 
+def test_two_item_significance_is_symmetric_for_unequal_popularity(tmp_path):
+    # A3 fairness property: for a 2-item type the two item-vs-REST contrasts are ONE mirror
+    # hypothesis (shared q), and in the common moderate-effect regime (|delta| under the
+    # max_abs_delta implausibility guard) the per-cell sample gate is symmetric too — each cell's
+    # gate needs BOTH item n_eff>=n_min_eff and rest n_eff>=n_min_eff, and n_eff<=n_players so the
+    # n_players floor is implied. So a rarer-but-strong alternative can't be measured one-sidedly
+    # while its popular sibling stays heuristic: both flip to 'winrate' together. This is what keeps
+    # the alternative gadget's measured edge weighed on equal footing with the recommended pick.
+    # (The ONE asymmetry source — the max_abs_delta guard on implausibly large >15pt effects with
+    #  n_eff<200 — is pinned separately in test_two_item_asymmetric_guard_still_picks_better_item.)
+    s = Scenario()
+    for pnum in range(400):                              # G1: popular, the WORSE item
+        j = ((pnum % 3) - 1) * 0.01
+        s.add(f"a{pnum}", G1, "gd", 0.54 + j, 20, tier=8)
+    for pnum in range(120):                              # G2: 3.3x rarer, the BETTER item
+        j = ((pnum % 3) - 1) * 0.01
+        s.add(f"b{pnum}", G2, "gd", 0.66 + j, 20, tier=8)
+    doc = s.build(tmp_path)
+    c1, c2 = doc["cells"][f"{X}:{G1}"], doc["cells"][f"{X}:{G2}"]
+    assert abs(c1["delta"]) < 0.15 and abs(c2["delta"]) < 0.15   # under the implausibility guard
+    assert c1["significant"] == c2["significant"] == 1          # joint, never one-sided
+    assert c2["delta"] > 0 > c1["delta"]                        # the rarer item is measured better
+    assert c1["n_players"] == 400 and c2["n_players"] == 120
+
+
+def test_two_item_asymmetric_guard_still_picks_better_item(tmp_path):
+    # A3 edge case: an implausibly large >15pt mirror effect trips the max_abs_delta guard
+    # asymmetrically — |delta|>0.15 fires the guard only on the cell whose n_eff<200, so the rarer
+    # BETTER item is guard-suppressed to heuristic while the popular WORSE item keeps its measured
+    # (negative) label. This is the guard being skeptical of an extreme claim on thin data, by
+    # design. The invariant that MUST survive: the recommended pick still lands on the better item.
+    s = Scenario()
+    for pnum in range(300):                              # G1: popular+worse, n_eff>=200 -> guard skips
+        j = ((pnum % 3) - 1) * 0.01
+        s.add(f"a{pnum}", G1, "gd", 0.50 + j, 25, tier=8)
+    for pnum in range(90):                               # G2: rare+better, n_eff<200 -> guard fires
+        j = ((pnum % 3) - 1) * 0.01
+        s.add(f"b{pnum}", G2, "gd", 0.70 + j, 25, tier=8)
+    doc = s.build(tmp_path)
+    c1, c2 = doc["cells"][f"{X}:{G1}"], doc["cells"][f"{X}:{G2}"]
+    assert abs(c1["delta"]) > 0.15 and abs(c2["delta"]) > 0.15   # both extreme (same mirror effect)
+    assert c1["significant"] == 1 and c2["significant"] == 0     # asymmetric: popular kept, rare cut
+    # Serve side: map the synthetic contrast onto a real 2-gadget brawler and confirm the pick.
+    from bsdraft.data import reference as R
+    shelly = R.brawler_by_name("Shelly")
+    g_worse, g_better = shelly.gadgets[0].id, shelly.gadgets[1].id
+    table = {"version": 1, "meta": {"gear_ids_by_name": {}}, "brawler_baseline": {}, "cells": {
+        f"{shelly.id}:{g_worse}": {"item_type": "gadget", "delta": c1["delta"], "significant": 1,
+                                   "item_winrate": 0.31, "n_eff": 300, "n_players": 300, "n_eff_rest": 90},
+        f"{shelly.id}:{g_better}": {"item_type": "gadget", "delta": c2["delta"], "significant": 0,
+                                    "item_winrate": 0.66, "n_eff": 90, "n_players": 90, "n_eff_rest": 300},
+    }}
+    import pytest as _pytest
+    _mp = _pytest.MonkeyPatch()
+    _mp.setattr(L.IS, "get_itemstats", lambda *a, **k: table)
+    try:
+        adv = L.loadout_advice(shelly.id, "Knockout")
+    finally:
+        _mp.undo()
+    rec = next(g for g in adv["gadgets"] if g["recommended"])
+    assert rec["id"] == g_better                                 # the better item still wins the pick
+    worse = next(g for g in adv["gadgets"] if g["id"] == g_worse)
+    assert worse["source"] == "winrate" and worse["recommended"] is False
+
+
 def test_mantel_haenszel_defuses_tier_confound(tmp_path):
     # G1 has NO true item effect, but its single-owners skew to the high tier (which wins more).
     # Pooled naive would show G1 ahead; MH stratified by tier must net it to ~0 and NOT flag it.

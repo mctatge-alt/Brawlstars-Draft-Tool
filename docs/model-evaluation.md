@@ -165,6 +165,18 @@ negligible cost (.0002 AUC vs the best syn-0 candidate).
   against. That can't be validated here for the usual reason (no pick-level labels) — but note
   the ablation scripts train their own *unmasked* nets internally, so their net-vs-empirical
   comparison remains apples-to-apples across reruns.
+- **Role is confidence-scaled, not flat (2026-08-18).** `role_fit` is a hand-set mode×class prior
+  and is *not* part of the validated ablation above (the sweep tunes only map/model/counter/
+  synergy). Because Ranked compresses empirical `map_wr` into a narrow band while role spans a wide
+  hand-set range, at its nominal 0.10 weight role was delivering ~29% of the first-pick ranking
+  spread — co-equal with map — and, being map-invariant, it flat-topped the same archetypes across
+  every map of a mode. Role now shrinks toward neutral by each candidate's own map-data confidence:
+  `role_eff = 0.5 + (1 − map_conf)·(role_fit − 0.5)`. On well-sampled maps role nearly drops out
+  (Crystal Arcade: role's effective ranking influence fell 29% → 10%, map now primary) so rankings
+  track real per-map win-rate; on freshly-rotated / zero-data maps `map_conf → 0` and the full
+  archetype prior remains, which is exactly where it earns its keep. The weight and renormalization
+  are unchanged — only the role *value* is gated. Not outcome-validated (no pick-level labels), same
+  caveat as the rest of the trio.
 
 ## Reproduce
 

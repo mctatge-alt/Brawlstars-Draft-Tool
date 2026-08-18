@@ -274,9 +274,9 @@ function SeatHint({ ready, chosen, name, active, hasTag, error }: {
 // Effect-based advice from /api/loadout; on the user's own seat it's filtered to what they own.
 const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-function ItemRow({ it, marked, locked, tag, compFlip }: {
+function ItemRow({ it, marked, locked, tag, tagTitle, compFlip }: {
   it: { name: string; image_url?: string; effect?: string; description?: string; comp_why?: string[] };
-  marked?: boolean; locked?: boolean; tag?: string; compFlip?: boolean;
+  marked?: boolean; locked?: boolean; tag?: string; tagTitle?: string; compFlip?: boolean;
 }) {
   return (
     <div className="flex gap-2 items-start py-[3px]" style={{ opacity: locked ? 0.5 : 1 }}>
@@ -288,7 +288,7 @@ function ItemRow({ it, marked, locked, tag, compFlip }: {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 flex-wrap leading-tight">
           <span className="text-[12px] font-semibold" style={{ color: marked ? "var(--gold)" : undefined }}>{it.name}</span>
-          {tag && <span className="mono text-[9px] text-[var(--dim)]">{tag}</span>}
+          {tag && <span className="mono text-[9px] text-[var(--dim)]" title={tagTitle}>{tag}</span>}
           {marked && <span className="mono text-[8px] px-1 py-0.5 leading-none font-bold" style={{ background: "var(--gold)", color: "#0a0a0c" }}>★ PICK{compFlip ? " · COMP" : ""}</span>}
           {locked && <span className="mono text-[8px] px-1 leading-none border border-[var(--line)] text-[var(--dim)]">🔒 own it</span>}
           {(it.comp_why ?? []).map((c) => (
@@ -351,7 +351,8 @@ function GearSection({ gears, isMySeat, ownedGears }: {
           {enriched.map(({ og, g }) => (
             <ItemRow key={og.id}
               it={{ name: og.name, effect: g?.effect, description: g?.description, comp_why: g?.comp_why }}
-              marked={bestNames.has(og.name)} tag={`Lv${og.level}`} />
+              marked={bestNames.has(og.name)} tag={`Lv ${og.level}/3`}
+              tagTitle={`Your gear's upgrade level — ${og.level} of 3 (max). How far you've upgraded this gear in-game, not a suggestion rank.`} />
           ))}
         </div>
       );
@@ -784,6 +785,29 @@ export default function DraftBoard() {
     }
   }, [blindPick, their]);
 
+  // Backtick (`) jumps the active slot to the FIRST pick, skipping any remaining ban slots — handy
+  // when only 3–5 bans are used and you want to move straight into picking. Backtick has no native
+  // key behavior and appears in no brawler name or tag, so it's intercepted globally EXCEPT while
+  // you're actively typing in a text field (one with a non-empty value), so a stray backtick
+  // mid-query isn't stolen. "First pick" = pickSeq[0] (the snake's first pick, or seat 0 under blind pick).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "`" || e.ctrlKey || e.altKey || e.metaKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      const val = el?.isContentEditable ? (el.textContent ?? "") : ((el as HTMLInputElement | null)?.value ?? "");
+      const typing = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el?.isContentEditable) && val.trim() !== "";
+      if (typing) return; // don't steal a backtick the user is typing into a field
+      const first = pickSeq[0];
+      if (!first) return;
+      e.preventDefault();
+      setActiveOverride({ zone: first.zone, index: first.index });
+      focusSearch();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pickSeq]);
+
   useEffect(() => {
     if (!mapId || !mode) return;
     // Roster + mastery + your win-rates apply to YOUR pick only (the seat you marked); a teammate
@@ -1096,7 +1120,9 @@ export default function DraftBoard() {
               <span className="label shrink-0" style={{ color: "var(--accent)" }}>▸ INPUT</span>
               <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.preventDefault(); if (topMatch) place(topMatch.id); }
+                  // Only place on a typed query that matches — never on an empty/whitespace box
+                  // (topMatch already guards this; the explicit check keeps the no-op local & regression-proof).
+                  if (e.key === "Enter") { e.preventDefault(); if (query.trim() && topMatch) place(topMatch.id); }
                   else if (e.key === "Escape") setQuery("");
                 }}
                 placeholder="TYPE TO PLACE  ·  e.g.  bro ↵"

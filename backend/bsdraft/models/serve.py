@@ -177,6 +177,35 @@ class WinProbModel:
         map_id: int,
         mode: str,
     ) -> List[float]:
+        return self._forward(teams_a, teams_b, map_id, mode, rowwise=False)
+
+    def prob_marginals(
+        self,
+        teams_a: List[List[int]],
+        teams_b: List[List[int]],
+        map_id: int,
+        mode: str,
+    ) -> List[float]:
+        """Batched ``prob`` for many boards at once, **bit-for-bit identical** to calling
+        :meth:`prob` per pair. Used by the pick recommender, which scores ~100 candidates that
+        share one enemy team and differ only by the added ally.
+
+        The gather / context / counter stages are already per-row independent, so batching them
+        is exact. The only stage BLAS accumulates differently for a tall matrix than for a single
+        row is the strength MLP's matmul — so it is computed one board at a time (``rowwise``),
+        each an M=1 GEMM identical to the per-candidate call. This still amortizes all the
+        per-candidate Python/array overhead (row lookups, ``_safe`` reductions, ``tile``,
+        ``concatenate``, ``.tolist``) that dominated the loop, without changing any result."""
+        return self._forward(teams_a, teams_b, map_id, mode, rowwise=True)
+
+    def _forward(
+        self,
+        teams_a: List[List[int]],
+        teams_b: List[List[int]],
+        map_id: int,
+        mode: str,
+        rowwise: bool,
+    ) -> List[float]:
         if not self.available:
             return [0.5] * len(teams_a)
         w = self._w
@@ -202,6 +231,18 @@ class WinProbModel:
         def strength(team: np.ndarray) -> np.ndarray:
             team_vec = w["brawler.weight"][team].mean(axis=1)        # (N, d_brawler), order-invariant
             h = np.concatenate([team_vec, ctx], axis=1)
+            if rowwise:
+                # One M=1 GEMM per board: reproduces prob()'s exact accumulation order (BLAS
+                # blocks a tall matmul differently, which would perturb the logit by ~1 float32
+                # ULP). Everything else here is already batched.
+                w0, b0 = w["strength.0.weight"].T, w["strength.0.bias"]
+                w3, b3 = w["strength.3.weight"].T, w["strength.3.bias"]
+                out = np.empty(h.shape[0], dtype=h.dtype)
+                for i in range(h.shape[0]):
+                    hi = h[i:i + 1] @ w0 + b0                        # Linear (M=1)
+                    hi = np.maximum(hi, 0.0)                         # ReLU (Dropout no-op at eval)
+                    out[i] = (hi @ w3 + b3)[0, 0]
+                return out
             h = h @ w["strength.0.weight"].T + w["strength.0.bias"]  # Linear
             h = np.maximum(h, 0.0)                                   # ReLU (Dropout is a no-op at eval)
             out = h @ w["strength.3.weight"].T + w["strength.3.bias"]

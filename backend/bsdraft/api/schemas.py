@@ -193,7 +193,7 @@ class LoadoutItem(BaseModel):
     fit: float = 0.0               # mode-fit score 0..1 (heuristic; swapped for a win-rate in Phase 2)
     recommended: bool = False      # the best-fit item of its kind for this mode
     why: str = ""                  # one-line reasoning tied to the mode/effect
-    source: str = "heuristic"      # "heuristic" (effect-based) | "curated" (gear guide)
+    source: str = "heuristic"      # "heuristic" (effect-based) | "curated" (gear guide) | "winrate" (measured)
     comp_delta: float = 0.0        # applied enemy-comp fit adjustment; fit - comp_delta = comp-blind fit
     comp_why: List[str] = []       # signed reason chips, e.g. "+ vs dive"
     comp_flipped: bool = False     # recommended only because of the comp (differs from comp-blind pick)
