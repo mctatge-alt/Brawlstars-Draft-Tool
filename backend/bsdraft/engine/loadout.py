@@ -4,7 +4,9 @@ Rule-based, in the same spirit as :mod:`bsdraft.engine.gameplan`. It classifies 
 brawler's gadgets and star powers by *effect* (parsed from the catalog description) and scores
 that effect against the game mode, rather than asserting a tier-list read the match data can't
 support (battle logs record the brawler, never the equipped item). Gears come from a small
-curated guide (``data/reference/gears.json``) since no catalog exposes them.
+curated guide (``data/reference/gears.json``) since no catalog exposes them. When the caller
+passes the opposing picks, a bounded enemy-comp overlay (class-count reads -> per-effect deltas,
+clamped) nudges the same fit scale — see the "enemy-comp overlay" block below.
 
 The response carries a ``fit`` score (0..1) and a ``source`` tag per item so the UI can label it
 and a later data-driven pass can swap the heuristic for a measured win rate without changing the
@@ -24,6 +26,7 @@ from typing import List, Optional
 from bsdraft.constants import REFERENCE_DIR
 from bsdraft.data import reference as R
 from bsdraft.engine import itemstats as IS
+from bsdraft.engine.composition import FRONTLINE, RANGE
 
 # Maps a measured win-rate delta (points) onto the 0..1 `fit` scale the UI already sorts by, so a
 # measured pick slots in beside the heuristic fits: +5% -> 0.65, +15% -> 0.95, -5% -> 0.35.
@@ -77,6 +80,27 @@ _MODE_EFFECT = {
                    "sustain": 0.55, "control": 0.55, "reload": 0.55},
 }
 
+# ---- enemy-comp overlay ----------------------------------------------------------------------
+# Comp-aware adjustment on top of the mode fit: enemy class counts fire coarse "reads" (all
+# thresholded at >=2 so a lone enemy pick fires nothing), each read contributing small per-effect
+# deltas shaped exactly like _MODE_EFFECT. Reads co-fire and sum; the total per effect is clamped
+# at ±_COMP_CLAMP — calibrated so the heuristic can never claim more than a strong measured signal
+# is worth (+5% measured win rate maps to +0.15 fit via _FIT_PER_DELTA). Class is the only
+# per-brawler attribute the reference carries, so the reads stay class-count coarse by design.
+_COMP_CLAMP = 0.15
+_COMP_CHIP_MIN = 0.04   # below this applied delta, don't clutter the item with reason chips
+_COMP_EFFECT = {
+    # 2+ Tank/Assassin: divers reach you — control/peel and sustain gain value, poke range less so.
+    "aggro": {"control": 0.10, "sustain": 0.06, "mobility": 0.04, "range": -0.03},
+    # 2+ Tanks specifically: raw damage to melt HP pools, control to kite (gameplan's "kite the Tank").
+    "tanky": {"damage": 0.10, "control": 0.04},
+    # 2+ Marksman/Controller/Artillery: close the gap or dodge — mobility and sustain to survive poke.
+    "poke": {"mobility": 0.08, "sustain": 0.06},
+}
+_COMP_CHIP = {"aggro": "vs dive", "tanky": "vs tanks", "poke": "vs poke"}
+_COMP_READ_LABEL = {"aggro": "dive-heavy ({n} Tank/Assassin)", "tanky": "{n} Tanks",
+                    "poke": "poke-heavy ({n} ranged)"}
+
 _TOKEN_RE = re.compile(r"<!.*?>")
 _WS_RE = re.compile(r"\s+")
 
@@ -118,6 +142,54 @@ def _gear_guide() -> dict:
     return {"note": doc.get("note", ""), "gears": doc.get("gears", []) or []}
 
 
+def _comp_overlay(enemies: Optional[List[int]], self_id: Optional[int] = None) -> Optional[dict]:
+    """Characterize the enemy comp (class counts only) and derive the per-effect fit deltas.
+
+    ``None`` when no *known* enemies were given — the comp layer is absent, not defaulted, mirroring
+    how scoring leaves ``counter`` unset until ``their_team`` is non-empty. Unknown ids and
+    Unclassified brawlers contribute nothing. Ids are deduped and the queried brawler is filtered
+    out: the frontend can't send duplicates/self, but the endpoint is public and never-4xx, so a
+    hand-crafted ``enemies=<tank>,<tank>`` must not fire the >=2-threshold reads off one opponent.
+    """
+    byid = _by_id()
+    classes = [byid[e].cls
+               for e in dict.fromkeys(enemies or []) if e != self_id and e in byid]
+    if not classes:
+        return None
+    counts = {
+        "aggro": sum(c in FRONTLINE for c in classes),
+        "tanky": sum(c == "Tank" for c in classes),
+        "poke": sum(c in RANGE for c in classes),
+    }
+    fired = [k for k in _COMP_EFFECT if counts[k] >= 2]
+    bonus: dict = {}
+    chips: dict = {}
+    for read in fired:
+        for eff, d in _COMP_EFFECT[read].items():
+            bonus[eff] = bonus.get(eff, 0.0) + d
+            chips.setdefault(eff, []).append(("+ " if d > 0 else "− ") + _COMP_CHIP[read])
+    bonus = {e: max(-_COMP_CLAMP, min(_COMP_CLAMP, v)) for e, v in bonus.items()}
+    reads = [_COMP_READ_LABEL[k].format(n=counts[k]) for k in fired]
+    return {"bonus": bonus, "chips": chips, "reads": reads}
+
+
+def _apply_comp(item: dict, effect: str, overlay: Optional[dict]) -> None:
+    """Fold the enemy-comp adjustment into ``fit`` AFTER the measured overlay, recording the applied
+    (post-clamp01) delta so ``fit - comp_delta`` reconstructs the comp-blind fit exactly. ``why`` is
+    never rewritten — the measured claim stays verbatim; the signed chips are the separate channel."""
+    if not overlay:
+        return
+    adj = overlay["bonus"].get(effect, 0.0)
+    if not adj:
+        return
+    base = item["fit"]
+    new = max(0.0, min(1.0, base + adj))
+    item["comp_delta"] = round(new - base, 3)
+    item["fit"] = round(new, 3)
+    if abs(item["comp_delta"]) >= _COMP_CHIP_MIN:
+        item["comp_why"] = list(overlay["chips"].get(effect, []))
+
+
 def _apply_measured(item: dict, cell: dict) -> None:
     """Overlay a *significant* measured win-rate cell onto a heuristic item: flip source to
     'winrate', set fit from the delta, and replace the reasoning with the measured number. The delta
@@ -133,7 +205,8 @@ def _apply_measured(item: dict, cell: dict) -> None:
                    f"{kind}s (single-item owners, n≈{cell.get('n_eff', 0):.0f})")
 
 
-def _advise_accessory(acc: R.Accessory, mode: str, brawler_id: int, itemstats: Optional[dict]) -> dict:
+def _advise_accessory(acc: R.Accessory, mode: str, brawler_id: int, itemstats: Optional[dict],
+                      comp: Optional[dict] = None) -> dict:
     effect = _classify(acc.description)
     label, blurb = _EFFECT_META[effect]
     item = {
@@ -147,10 +220,14 @@ def _advise_accessory(acc: R.Accessory, mode: str, brawler_id: int, itemstats: O
         "recommended": False,  # set by _mark_best once the whole kind is scored
         "why": f"{label}: {blurb}.",
         "source": "heuristic",
+        "comp_delta": 0.0,     # applied enemy-comp adjustment; fit - comp_delta = comp-blind fit
+        "comp_why": [],        # signed reason chips, e.g. "+ vs dive"
+        "comp_flipped": False, # set by _mark_best when the pick only wins because of the comp
     }
     cell = IS.accessory_cell(itemstats, brawler_id, acc.id)
     if cell and cell.get("significant"):
         _apply_measured(item, cell)
+    _apply_comp(item, effect, comp)   # after measured: folds into fit, never touches why/source
     return item
 
 
@@ -159,11 +236,31 @@ def _mark_best(items: List[dict], mode: str) -> None:
     the brawler's other items of the type (positive delta, i.e. fit > 0.5) — a measured edge beats an
     effect guess. A lone measured item that's measured *worse* must NOT be recommended, so when no
     positive-measured item exists we fall back to the best fit over all items (which lets a stronger
-    heuristic sibling win over a negative-measured one)."""
+    heuristic sibling win over a negative-measured one).
+
+    The enemy-comp overlay folds into ``fit`` with the applied delta recorded on ``comp_delta``, so
+    measured-vs-heuristic arbitration runs on the comp-blind base fit: the measured-better test uses
+    it, and a measured-WORSE item competes at it (a comp bump must never promote an item whose own
+    measurement says it loses to its siblings). Heuristic items rank by the final comp-adjusted fit.
+    When the comp adjustment alone changes the winner, the pick is flagged ``comp_flipped``."""
     if not items:
         return
-    measured_better = [it for it in items if it["source"] == "winrate" and it["fit"] > 0.5]
-    best = max(measured_better or items, key=lambda it: it["fit"])
+
+    def base(it: dict) -> float:
+        # fit and comp_delta are each 3-dp rounded; round the reconstruction too, or ~1e-16 float
+        # noise mis-resolves TRUE base-fit ties in the exact max comparisons below.
+        return round(it["fit"] - it.get("comp_delta", 0.0), 3)
+
+    def rank(it: dict) -> float:
+        if it["source"] == "winrate" and base(it) <= 0.5:
+            return base(it)   # measured-worse: the comp bump can't lift it over siblings
+        return it["fit"]
+
+    measured_better = [it for it in items if it["source"] == "winrate" and base(it) > 0.5]
+    pool = measured_better or items
+    best = max(pool, key=rank)
+    if best is not max(pool, key=base):
+        best["comp_flipped"] = True
     best["recommended"] = True
     if best["source"] == "winrate":
         best["why"] = "Top measured pick — " + best["why"][0].lower() + best["why"][1:]
@@ -206,23 +303,30 @@ def _gear_items(cls: str, mode: str, brawler_id: int, itemstats: Optional[dict],
     return out
 
 
-def loadout_advice(brawler_id: int, mode: str, map_id: Optional[int] = None) -> Optional[dict]:
+def loadout_advice(brawler_id: int, mode: str, map_id: Optional[int] = None,
+                   enemies: Optional[List[int]] = None) -> Optional[dict]:
     """Loadout advice for a drafted brawler, or ``None`` if the brawler id is unknown.
 
-    ``map_id`` is accepted for a future per-map slice (Phase 2); the heuristic is mode-level today.
+    ``enemies`` (ids of the queried brawler's opponents, seat-flip resolved by the caller) turns on
+    the comp-aware overlay; absent/empty keeps today's comp-blind behavior byte-identical.
+    ``map_id`` is accepted for a future per-map slice; the heuristic is mode-level today.
     """
     b = _by_id().get(brawler_id)
     if b is None:
         return None
     itemstats = IS.get_itemstats()   # None until the table is built/synced -> pure heuristic
-    gadgets = [_advise_accessory(a, mode, b.id, itemstats) for a in b.gadgets]
-    star_powers = [_advise_accessory(a, mode, b.id, itemstats) for a in b.star_powers]
+    comp = _comp_overlay(enemies, self_id=b.id)
+    gadgets = [_advise_accessory(a, mode, b.id, itemstats, comp) for a in b.gadgets]
+    star_powers = [_advise_accessory(a, mode, b.id, itemstats, comp) for a in b.star_powers]
     _mark_best(gadgets, mode)
     _mark_best(star_powers, mode)
-    gears = _gear_items(b.cls, mode, b.id, itemstats)
+    gears = _gear_items(b.cls, mode, b.id, itemstats)   # comp-blind: gear offsets are Phase 2
     measured = any(it["source"] == "winrate" for it in gadgets + star_powers + gears)
     note = ("Measured win rates where the sample is sufficient; effect-based fit otherwise."
             if measured else f"Effect-based fit for {mode} — not a live tier read yet.")
+    comp_reads = comp["reads"] if comp else []
+    if comp_reads:
+        note += " Adjusted for the enemy comp."
     return {
         "brawler_id": b.id,
         "brawler_name": b.name,
@@ -232,4 +336,5 @@ def loadout_advice(brawler_id: int, mode: str, map_id: Optional[int] = None) -> 
         "star_powers": star_powers,
         "gears": gears,
         "note": note,
+        "comp_reads": comp_reads,
     }

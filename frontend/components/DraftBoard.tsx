@@ -274,9 +274,9 @@ function SeatHint({ ready, chosen, name, active, hasTag, error }: {
 // Effect-based advice from /api/loadout; on the user's own seat it's filtered to what they own.
 const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-function ItemRow({ it, marked, locked, tag }: {
-  it: { name: string; image_url?: string; effect?: string; description?: string };
-  marked?: boolean; locked?: boolean; tag?: string;
+function ItemRow({ it, marked, locked, tag, compFlip }: {
+  it: { name: string; image_url?: string; effect?: string; description?: string; comp_why?: string[] };
+  marked?: boolean; locked?: boolean; tag?: string; compFlip?: boolean;
 }) {
   return (
     <div className="flex gap-2 items-start py-[3px]" style={{ opacity: locked ? 0.5 : 1 }}>
@@ -289,8 +289,14 @@ function ItemRow({ it, marked, locked, tag }: {
         <div className="flex items-center gap-1.5 flex-wrap leading-tight">
           <span className="text-[12px] font-semibold" style={{ color: marked ? "var(--gold)" : undefined }}>{it.name}</span>
           {tag && <span className="mono text-[9px] text-[var(--dim)]">{tag}</span>}
-          {marked && <span className="mono text-[8px] px-1 py-0.5 leading-none font-bold" style={{ background: "var(--gold)", color: "#0a0a0c" }}>★ PICK</span>}
+          {marked && <span className="mono text-[8px] px-1 py-0.5 leading-none font-bold" style={{ background: "var(--gold)", color: "#0a0a0c" }}>★ PICK{compFlip ? " · COMP" : ""}</span>}
           {locked && <span className="mono text-[8px] px-1 leading-none border border-[var(--line)] text-[var(--dim)]">🔒 own it</span>}
+          {(it.comp_why ?? []).map((c) => (
+            <span key={c} className="mono text-[8px] px-1 py-0.5 leading-none border"
+              style={c.startsWith("+")
+                ? { borderColor: "var(--accent)", color: "var(--accent)" }
+                : { borderColor: "var(--line)", color: "var(--dim)" }}>{c}</span>
+          ))}
         </div>
         {(it.effect || it.description) && (
           <div className="mono text-[10px] text-[var(--muted)] leading-snug line-clamp-2">
@@ -318,7 +324,10 @@ function AccSection({ title, items, isMySeat, ownedIds }: {
       <div className="label mb-0.5">{title}</div>
       {noneOwned && <div className="mono text-[10px] text-[var(--dim)]">you don&apos;t own a {title.toLowerCase()} here yet</div>}
       {sorted.map((it) => (
-        <ItemRow key={it.id ?? it.name} it={it} marked={mark === it} locked={isMySeat && !owns(it)} />
+        <ItemRow key={it.id ?? it.name} it={it} marked={mark === it} locked={isMySeat && !owns(it)}
+          // ·COMP badge only off-seat: the my-seat star is the client-side owned-max, so the
+          // server's comp_flipped (about the unfiltered pool) would lie there. Chips still render.
+          compFlip={!isMySeat && mark === it && !!it.comp_flipped} />
       ))}
     </div>
   );
@@ -394,6 +403,11 @@ function LoadoutPopover({ data, isMySeat, owned, accent, rect }: {
               ? <span className="mono text-[9px]" style={{ color: "var(--gold)" }}>YOUR INVENTORY</span>
               : <span className="mono text-[9px] text-[var(--dim)]">{data.mode}</span>}
           </div>
+          {!!data.comp_reads?.length && (
+            <div className="mono text-[10px] text-[var(--dim)] -mt-1 mb-1.5">
+              vs: <span style={{ color: "var(--accent)" }}>{data.comp_reads.join(" · ")}</span>
+            </div>
+          )}
           <AccSection title="GADGET" items={data.gadgets} isMySeat={isMySeat}
             ownedIds={new Set(owned?.owned_gadgets ?? [])} />
           <AccSection title="STAR POWER" items={data.star_powers} isMySeat={isMySeat}
@@ -667,19 +681,36 @@ export default function DraftBoard() {
     (roster?.owned || []).forEach((o) => m.set(o.id, o));
     return m;
   }, [roster]);
-  const loadoutKey = (bid: number) => `${bid}:${mode}`;
-  // Lazily fetch a drafted brawler's loadout advice for the current mode; cache per (brawler, mode)
-  // so re-hovering is instant and switching maps within a mode reuses it. A failed fetch is evicted
-  // so the next hover retries.
+  // Opponents of a drafted brawler, for comp-aware loadout advice: their team for our picks
+  // (zeroed under blind pick, mirroring the recommend body), our team for theirs. Sorted so the
+  // cache key is order-independent.
+  const enemiesFor = (bid: number): number[] => {
+    const list = our.some((x) => x === bid) ? (blindPick ? [] : their) : our;
+    return list.filter((x): x is number => x != null).sort((a, b) => a - b);
+  };
+  const loadoutKey = (bid: number) => `${bid}:${mode}:${enemiesFor(bid).join(",")}`;
+  // Lazily fetch a drafted brawler's loadout advice; cache per (brawler, mode, enemy comp) so
+  // re-hovering is instant, switching maps within a mode reuses it, and a landed enemy pick changes
+  // the key so the next hover refetches comp-aware advice. A failed fetch is evicted so the next
+  // hover retries.
   const ensureLoadout = (bid: number) => {
     if (!mode) return;
     const key = loadoutKey(bid);
     if (loadouts[key]) return;
     setLoadouts((c) => ({ ...c, [key]: "loading" }));
-    getLoadout(bid, mode, mapId)
+    getLoadout(bid, mode, mapId, enemiesFor(bid))
       .then((r) => setLoadouts((c) => ({ ...c, [key]: r })))
       .catch(() => setLoadouts((c) => { const n = { ...c }; delete n[key]; return n; }));
   };
+  // A pick landing mid-hover (keyboard placement) changes the hovered slot's comp key, and
+  // onMouseEnter won't re-fire — the browser keeps hover on the re-rendered button — which would
+  // strand the open popover on "Loading…". Re-ensure the hovered slot whenever its key inputs move.
+  useEffect(() => {
+    if (!hoverSlot || hoverSlot.zone === "ban") return;
+    const bid = (hoverSlot.zone === "our" ? our : their)[hoverSlot.index];
+    if (bid != null) ensureLoadout(bid);
+    // ensureLoadout/enemiesFor are render-scoped; deps below are exactly the cache-key inputs.
+  }, [hoverSlot, our, their, mode, blindPick]);  // eslint-disable-line react-hooks/exhaustive-deps
   const boostedSet = useMemo(() => new Set(ref?.boosted || []), [ref]);
   const personalizeReady = !!roster?.loaded;
   const bracket = rankInfo?.found ? rankInfo.bracket : null;
@@ -816,6 +847,7 @@ export default function DraftBoard() {
     setOur(Array(TEAM_N).fill(null));
     setTheir(Array(TEAM_N).fill(null));
     setActiveOverride(null);
+    setLoadouts({});   // comp-keyed entries are stale across drafts; refetch is cheap
     focusSearch();
   };
 

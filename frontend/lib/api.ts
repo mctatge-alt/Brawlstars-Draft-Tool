@@ -53,10 +53,14 @@ export type LoadoutItem = {
   id: number | null; name: string; kind: "gadget" | "star_power" | "gear";
   image_url: string; effect: string; description: string;
   fit: number; recommended: boolean; why: string; source: string;
+  // Enemy-comp overlay (optional so old backends still type-check): applied fit adjustment,
+  // signed reason chips ("+ vs dive"), and whether the pick only wins because of the comp.
+  comp_delta?: number; comp_why?: string[]; comp_flipped?: boolean;
 };
 export type LoadoutResponse = {
   brawler_id: number; brawler_name: string; cls: string; mode: string;
   gadgets: LoadoutItem[]; star_powers: LoadoutItem[]; gears: LoadoutItem[]; note: string;
+  comp_reads?: string[];         // fired enemy-comp reads, e.g. ["dive-heavy (2 Tank/Assassin)"]
 };
 
 export type PurchaseKind =
@@ -188,9 +192,11 @@ export async function getPurchases(
   return res.json();
 }
 
-export async function getLoadout(brawlerId: number, mode: string, mapId?: number | null): Promise<LoadoutResponse> {
+export async function getLoadout(brawlerId: number, mode: string, mapId?: number | null,
+                                 enemies?: number[]): Promise<LoadoutResponse> {
   const qs = new URLSearchParams({ brawler: String(brawlerId), mode });
   if (mapId != null) qs.set("map_id", String(mapId));
+  if (enemies && enemies.length) qs.set("enemies", enemies.join(","));  // comp-aware overlay
   const res = await fetch(`${API_BASE}/api/loadout?${qs.toString()}`);
   if (!res.ok) throw new Error(`loadout: ${res.status}`);
   return res.json();

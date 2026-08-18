@@ -92,3 +92,25 @@ loader picks up the new file on the next request. Build against the **same refer
 - **No map/mode split (yet).** The primary estimate pools modes; where ownership correlates with
   mode-of-play a pooled delta can mislead (Simpson risk). Mode can be added as an extra MH stratum
   where sample allows.
+
+## Comp-aware overlay (heuristic, Phase 1 — 2026-08-18)
+
+`/api/loadout` accepts an optional `enemies=<csv>` param (ids of the queried brawler's opponents;
+the frontend resolves the seat flip and mirrors blind-pick zeroing). Enemy **class counts** fire
+coarse reads (`dive-heavy`, `2 Tanks`, `poke-heavy` — all thresholded at ≥2 picks) that add small
+per-effect deltas shaped like `_MODE_EFFECT`, summed and clamped at ±0.15 — calibrated so the
+heuristic can never claim more than a strong measured signal (+5% ≡ +0.15 fit via
+`_FIT_PER_DELTA`). Composition policy:
+
+- **Measured stays authoritative.** The comp delta folds into `fit` *after* `_apply_measured`,
+  recorded on `comp_delta` (`fit − comp_delta` = comp-blind fit); `why`/`source` are never
+  rewritten. `_mark_best`'s measured-better test runs on the comp-blind base fit, so a comp bump
+  can't launder a measured-negative item into the pick.
+- **Flips are labeled, not suppressed.** When the winner differs from the comp-blind winner the
+  item carries `comp_flipped` and the UI badges `★ PICK · COMP`; signed chips (`+ vs dive`)
+  explain each adjusted item. No hysteresis — the clamp restricts flips to near-ties.
+- **Skew-safe by shape.** No `enemies` → byte-identical comp-blind output (the overlay is absent,
+  not defaulted); junk CSV degrades silently; old clients/backends interoperate unchanged.
+- **Unvalidatable by construction** (logs never record the equipped item) — the table
+  (`_COMP_EFFECT` in `engine/loadout.py`) is capped opinion, honestly labeled in `note`.
+  Gears stay comp-blind (curated offsets are Phase 2); the measured path here is unchanged.

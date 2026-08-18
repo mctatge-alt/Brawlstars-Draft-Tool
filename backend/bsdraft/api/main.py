@@ -288,13 +288,31 @@ def reference():
                                brackets=brackets, boosted=list(R.load_ranked_boosted()))
 
 
+def _parse_id_csv(raw: Optional[str], cap: int = 5) -> List[int]:
+    """Defensive CSV-of-ints parser for the loadout ``enemies`` param: junk tokens are skipped and
+    the list is capped — never a 4xx, because the hover popover must degrade quietly."""
+    out: List[int] = []
+    for tok in (raw or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            out.append(int(tok))
+        except ValueError:
+            continue
+    return out[:cap]
+
+
 @app.get("/api/loadout", response_model=S.LoadoutResponse)
-def loadout(brawler: int, mode: str, map_id: Optional[int] = None):
+def loadout(brawler: int, mode: str, map_id: Optional[int] = None, enemies: Optional[str] = None):
     """Which gadget / star power / gear to equip on a drafted brawler, given the mode. Effect-based
     heuristic (see :mod:`bsdraft.engine.loadout`) — the client overlays the user's owned items on
-    their own pick. Returns an empty (but well-formed) body for an unknown brawler so the hover
-    popover degrades quietly rather than erroring."""
-    adv = loadout_advice(brawler, mode, map_id)
+    their own pick. ``enemies`` (CSV of the queried brawler's opponents' ids, seat-flip resolved by
+    the client) turns on the comp-aware overlay; optional, so old clients keep byte-identical
+    comp-blind behavior and both deploy-skew directions are silent no-ops. Returns an empty (but
+    well-formed) body for an unknown brawler so the hover popover degrades quietly rather than
+    erroring."""
+    adv = loadout_advice(brawler, mode, map_id, enemies=_parse_id_csv(enemies))
     if adv is None:
         return S.LoadoutResponse(brawler_id=brawler, brawler_name="", mode=mode)
     return S.LoadoutResponse(**adv)
