@@ -1120,10 +1120,14 @@ export default function DraftBoard() {
               <span className="label shrink-0" style={{ color: "var(--accent)" }}>▸ INPUT</span>
               <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  // Only place on a typed query that matches — never on an empty/whitespace box
-                  // (topMatch already guards this; the explicit check keeps the no-op local & regression-proof).
-                  if (e.key === "Enter") { e.preventDefault(); if (query.trim() && topMatch) place(topMatch.id); }
-                  else if (e.key === "Escape") setQuery("");
+                  // Enter places into the active slot: the typed match when you're typing, otherwise
+                  // the board's #1 suggestion (top pick/ban for the current phase) — the keyboard-fast
+                  // "lock the call" without reaching for the mouse.
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (query.trim()) { if (topMatch) place(topMatch.id); }
+                    else { const top = topPick || topBan; if (top) place(top.brawler_id); }
+                  } else if (e.key === "Escape") setQuery("");
                 }}
                 placeholder="TYPE TO PLACE  ·  e.g.  bro ↵"
                 aria-label="Type a brawler name and press Enter to place it in the active slot"
