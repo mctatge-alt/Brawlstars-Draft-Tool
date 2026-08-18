@@ -6,6 +6,17 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 ## 2026-08-18
 
+- **Loadout advice now adjusts to the enemy comp.** The hover popover's gadget / star-power / gear
+  picks were frozen at pick time; now the drafted enemy team feeds a bounded overlay: class-count
+  reads (dive-heavy, 2 Tanks, poke-heavy) plus a CC-heavy read that fires when *every* enemy
+  carries real crowd control in their kit (keyword scan corrected by a full-roster audit — Frank's
+  pull, Sandy's sleep and friends were being missed; Carl/Janet's self-dashes no longer count).
+  Adjusted items show signed chips ("+ vs dive"), the popover header names the reads it saw, and a
+  pick that wins *only because* of the comp is badged ★ PICK · COMP. Gears join in via curated
+  counter offsets (Shield vs dive/CC, Damage vs tanks, Health/Speed vs poke). Capped at ±0.15 fit
+  so the comp nudges rather than overrules the mode read, measured win rates stay authoritative
+  where they exist, and advice refreshes as picks land (Mythic+ drafts only — blind-pick brackets
+  can't see the enemy team).
 - **Bolt no longer shows Brock's gadgets.** The upstream catalog API serves "Rocket Laces" and
   "Rocket Fuel" under Bolt as well as Brock, and the committed snapshot had carried the duplicate
   since day one — polluting Bolt's loadout advice (the kit-description effect classifier read
