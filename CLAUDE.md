@@ -27,5 +27,6 @@ AI ranked-draft assistant for Brawl Stars: a Python win-probability model + draf
 | [deploy/roster-tunnel.md](deploy/roster-tunnel.md) | Cloudflare Tunnel setup for per-visitor roster (`roster.brawldraft.com`) | When touching roster personalization or tunnel/launchd config |
 | [PLAN.md](PLAN.md) | Goals, competitive landscape, phased roadmap | For scope/why questions or when planning new features |
 | [README.md](README.md) | Public-facing overview, feature summary, quickstart | For the product pitch or user-visible behavior |
+| [CHANGELOG.md](CHANGELOG.md) | Dated log of notable user-visible changes | After shipping one — add an entry; or when summarizing what shipped |
 
 `Notes/` holds personal planning scratch notes — not maintained documentation.
