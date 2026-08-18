@@ -334,13 +334,14 @@ function GearSection({ gears, isMySeat, ownedGears }: {
       const enriched = ownedGears
         .map((og) => ({ og, g: byName.get(normName(og.name)) }))
         .sort((a, b) => (b.g?.fit ?? 0) - (a.g?.fit ?? 0));
-      const bestName = enriched[0]?.og.name;
+      // You run TWO gears in a match, so star the best two you own (fewer if you own fewer).
+      const bestNames = new Set(enriched.slice(0, 2).map((e) => e.og.name));
       return (
         <div className="mt-2">
           <div className="label mb-0.5">GEARS · YOURS</div>
           {enriched.map(({ og, g }) => (
             <ItemRow key={og.id} it={{ name: og.name, effect: g?.effect, description: g?.description }}
-              marked={og.name === bestName} tag={`Lv${og.level}`} />
+              marked={bestNames.has(og.name)} tag={`Lv${og.level}`} />
           ))}
         </div>
       );
