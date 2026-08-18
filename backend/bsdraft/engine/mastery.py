@@ -1,12 +1,15 @@
 """Player roster & mastery.
 
 Personalizes recommendations to brawlers the player actually owns and is invested in:
-power level, personal trophies (comfort), and owned star powers / gadgets / gears /
-hypercharge / **buffies**. Buffies are per-item buff enhancements
-(`{"gadget": bool, "starPower": bool, "hyperCharge": bool}`). Every brawler the roster returns
-carries this object with all three keys present — owned or not — so the slot total is read from
-the object's own keys rather than assumed. A brawler with unowned buffie slots is under-built
-and gets a lower investment score.
+power level, personal trophies (comfort), and owned star powers / gadgets / gears / hypercharge.
+
+Buffies are deliberately **not** scored. The `/players/{tag}` roster does carry a per-brawler
+`buffies: {"gadget": bool, "starPower": bool, "hyperCharge": bool}` object, but its `True` flags
+only tell us which buffies the player *owns* — never how many *exist* for that brawler. A brawler
+with no buffie released (e.g. R-T) returns all-`False`, which is indistinguishable from one whose
+buffies you simply haven't unlocked yet. With no reliable slot total, a "missing buffie" signal
+misfires on every brawler that has none (verified against maxed top-100 rosters), so buffies are
+left out of both the build score and the loadout gaps.
 """
 from __future__ import annotations
 
@@ -25,8 +28,6 @@ class Mastery:
     has_gadget: bool
     has_gears: bool
     has_hypercharge: bool
-    buffies_have: int
-    buffies_total: int
     # The *specific* owned items (ids), retained so the UI can suggest only what the player can
     # actually equip on their own pick. Gears carry names+levels since no catalog lists them.
     # These are also the raw ingredient for the planned single-item-owner win-rate inference.
@@ -39,14 +40,14 @@ class Mastery:
         return min(1.0, self.highest_trophies / 1000.0)
 
     @property
-    def build(self) -> float:  # how fully built the brawler is (incl. buffies)
-        buffie = self.buffies_have / self.buffies_total if self.buffies_total else 0.0
+    def build(self) -> float:  # how fully built the brawler is, over the loadout the API can measure
+        # Star power weighted 1.5× a gadget or gear — the original 3:2:2 split, with the buffie term
+        # dropped (see the module docstring) and the rest renormalized to reach 1.0 when fully built.
         return (
-            0.30 * (1.0 if self.has_starpower else 0.0)
-            + 0.20 * (1.0 if self.has_gadget else 0.0)
-            + 0.20 * (1.0 if self.has_gears else 0.0)
-            + 0.30 * buffie
-        )
+            3 * (1.0 if self.has_starpower else 0.0)
+            + 2 * (1.0 if self.has_gadget else 0.0)
+            + 2 * (1.0 if self.has_gears else 0.0)
+        ) / 7.0
 
     @property
     def score(self) -> float:
@@ -54,7 +55,7 @@ class Mastery:
         # out on purpose: a brawler below the bracket's power floor is unselectable and gets dropped
         # upstream (see ``tiers.min_power_for_bracket`` / the API's ``_roster_for``), so it never
         # reaches this scorer; among those that do, what the player controls is the loadout (you can
-        # only equip the star powers / gadgets / gears / buffies you own) and how much they've played
+        # only equip the star powers / gadgets / gears you own) and how much they've played
         # it. So the score is loadout-forward, comfort second (a maxed but under-built brawler is
         # still under-built). (The Power 9–10 window that survives the floor below Mythic isn't
         # modelled here — the dataset's win rates already fold real power in.)
@@ -68,8 +69,6 @@ class Mastery:
             out.append("no star power")
         if not self.has_gadget:
             out.append("no gadget")
-        if self.buffies_total and self.buffies_have < self.buffies_total:
-            out.append("missing buffie")
         if not self.has_hypercharge:
             out.append("no hypercharge")
         return out
@@ -90,13 +89,6 @@ def _gears(items) -> Tuple[dict, ...]:
 def parse_roster(player: dict) -> Dict[int, Mastery]:
     roster: Dict[int, Mastery] = {}
     for b in player.get("brawlers", []):
-        # Slot total is the object's own key count, not a hardcoded 3. Every roster entry
-        # observed so far carries all three keys, so this reads the same — but if the object
-        # is ever absent or resized, counting what's actually there degrades to "no buffie
-        # gap" instead of inventing slots the player has no way to fill.
-        buf = b.get("buffies") or {}
-        have = sum(1 for v in buf.values() if v) if isinstance(buf, dict) else 0
-        total = len(buf) if isinstance(buf, dict) else 0
         star_powers = b.get("starPowers") or []
         gadgets = b.get("gadgets") or []
         gears = b.get("gears") or []
@@ -110,8 +102,6 @@ def parse_roster(player: dict) -> Dict[int, Mastery]:
             has_gadget=bool(gadgets),
             has_gears=bool(gears),
             has_hypercharge=bool(b.get("hyperCharges")),
-            buffies_have=have,
-            buffies_total=total,
             owned_star_powers=_ids(star_powers),
             owned_gadgets=_ids(gadgets),
             owned_gears=_gears(gears),

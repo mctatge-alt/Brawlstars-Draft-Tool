@@ -329,7 +329,6 @@ async def roster(tag: Optional[str] = None):
                 owned_gears=[S.OwnedGear(**g) for g in m.owned_gears],
                 # Progression state the purchase advisor needs (already parsed by Mastery).
                 power=m.power, has_hypercharge=m.has_hypercharge,
-                buffies_have=m.buffies_have, buffies_total=m.buffies_total,
             )
             for bid, m in r.items()
         ]
@@ -345,7 +344,7 @@ async def roster(tag: Optional[str] = None):
 @app.post("/api/purchases", response_model=S.PurchasesResponse)
 def purchases(req: S.PurchaseRequest):
     """Rank a player's highest-value next purchases (power upgrades, gadgets, star powers, gears,
-    hypercharges, buffies, new-brawler unlocks) from their ownership snapshot. Like /api/recommend,
+    hypercharges, new-brawler unlocks) from their ownership snapshot. Like /api/recommend,
     the client sends the roster it fetched from the keyed tunnel — the public host can't fetch it
     itself. Scored by meta strength × purchase impact; cost is shown as context (balances are
     unknowable). See :mod:`bsdraft.engine.purchases`."""
@@ -356,8 +355,6 @@ def purchases(req: S.PurchaseRequest):
             gadgets=frozenset(e.owned_gadgets),
             gears=frozenset(purchases_mod._norm(g.name) for g in e.owned_gears),
             has_hypercharge=e.has_hypercharge,
-            buffies_have=e.buffies_have,
-            buffies_total=e.buffies_total,
         )
         for e in req.roster
     }

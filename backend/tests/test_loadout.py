@@ -85,23 +85,19 @@ def test_parse_roster_retains_owned_item_ids():
     assert m.has_starpower and m.has_gadget and m.has_gears
 
 
-def test_absent_buffie_object_invents_no_gap():
-    # Defensive: the live roster always sends a 3-key `buffies` object, so this shape isn't
-    # observed today. If it ever appears, the slot total must fall to 0 rather than assume 3 —
-    # a fabricated total would show an unfillable "missing buffie" tag on the pick cards.
-    player = {"brawlers": [{"id": 16000000, "power": 11}]}
-    m = mastery.parse_roster(player)[16000000]
-    assert m.buffies_total == 0
-    assert "missing buffie" not in m.gaps()
-
-
-def test_partly_owned_buffies_are_flagged_missing():
-    # The real shape: three keys, some false. An unfilled slot is a genuine gap — a brawler
-    # with all three false (Mr. P, on the reference roster) is correctly flagged too.
+def test_buffies_are_never_a_gap_or_a_build_penalty():
+    # R-T has no buffies in the game — its `buffies` object is all-False even on maxed top-100
+    # rosters. The old model read the fixed 3-key object as 3 fillable slots and flagged every
+    # under-buffied brawler "missing buffie" (and docked its build ~0.30). Buffies are now unscored:
+    # a fully-owned loadout scores build == 1.0 and emits no buffie gap, whatever the buffies say.
     player = {"brawlers": [{
         "id": 16000000, "power": 11,
-        "buffies": {"gadget": True, "starPower": False, "hyperCharge": False},
+        "starPowers": [{"id": 1}], "gadgets": [{"id": 2}],
+        "gears": [{"id": 5, "name": "Speed", "level": 3}],
+        "hyperCharges": [{"id": 9}],
+        "buffies": {"gadget": False, "starPower": False, "hyperCharge": False},
     }]}
     m = mastery.parse_roster(player)[16000000]
-    assert (m.buffies_have, m.buffies_total) == (1, 3)
-    assert "missing buffie" in m.gaps()
+    assert m.build == 1.0
+    assert m.gaps() == []
+    assert not hasattr(m, "buffies_total")  # the misleading slot count is gone entirely

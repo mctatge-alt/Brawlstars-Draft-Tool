@@ -14,7 +14,8 @@ This module is the **structured** half of the new-content watch, complementing t
   * patchnotes — everything the catalog does NOT expose: **gears, hypercharges, buffies** and the
     actual balance numbers. Verified: ``/v1/{gadgets,starpowers,gears}`` are 404 and brawler
     records carry no gears/hypercharge/buffies field, so the release notes are the only source
-    for those. (Buffies additionally show up per-player on the roster — see ``engine/mastery.py``.)
+    for those. (Buffies do show up per-player on the roster as owned/not-owned flags, but with no
+    way to know how many exist per brawler they aren't scored — see ``engine/mastery.py``.)
 
 Source hosts: ``api.brawlify.com`` began bot-blocking automated requests (HTTP 403 "Security
 Check") — ``api.brawlapi.com`` serves the identical payload and is tried first, with the

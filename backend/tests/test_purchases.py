@@ -84,13 +84,13 @@ ECON = {
     },
     "item_costs": {
         "gadget": {"coins": 1000}, "star_power": {"coins": 2000}, "gear": {"coins": 1000},
-        "hypercharge": {"coins": 5000}, "buffie": {"power_points": 2000, "coins": 1000},
+        "hypercharge": {"coins": 5000},
     },
     "new_brawler_credits": {"Epic": 170, "Mythic": 430, "Legendary": 860},
     "power_gates": {"gadget": 7, "gear": 8, "star_power": 9, "hypercharge": 11},
     "impact_priors": {
         "gadget_first": 0.85, "gadget_second": 0.45, "star_power_first": 0.90,
-        "star_power_second": 0.40, "gear": 0.55, "hypercharge": 0.80, "buffie": 0.50,
+        "star_power_second": 0.40, "gear": 0.55, "hypercharge": 0.80,
         "new_brawler": 0.70,
     },
     "hypercharge_availability": {"mode": "all_except", "list": []},
@@ -159,17 +159,15 @@ def test_power_gate_folds_the_upgrade_cost_and_annotates():
     assert sp["gate"] == "requires Power 9" and sp["target_power"] == 9, sp
 
 
-def test_buffie_only_when_a_slot_is_open():
-    """Recommend a buffie iff have < total; a brawler with no buffie slots gets none."""
+def test_no_buffie_recommendations():
+    """Buffies are unadvised: the roster reports which buffies you own but not how many exist, so
+    'slot open' can't be told from 'no buffie released' (R-T has none). The advisor never emits a
+    buffie rec — the old '0/3 slots filled' misfire on buffie-less brawlers is gone."""
     owned = {
-        1: OwnedState(power=11, gadgets=frozenset({101, 102}), star_powers=frozenset({201, 202}),
-                      buffies_have=1, buffies_total=3),
-        2: OwnedState(power=11, gadgets=frozenset({111, 112}), star_powers=frozenset({211, 212}),
-                      buffies_have=0, buffies_total=0),
+        1: OwnedState(power=11, gadgets=frozenset({101, 102}), star_powers=frozenset({201, 202})),
     }
-    recs = _run(owned, {1: 0.55, 2: 0.55})
-    assert _by(recs, brawler_id=1, kind="buffie"), "1/3 filled → recommend a buffie"
-    assert not _by(recs, brawler_id=2, kind="buffie"), "no buffie slots → nothing to buy"
+    recs = _run(owned, {1: 0.55})
+    assert not _by(recs, brawler_id=1, kind="buffie")
 
 
 def test_hypercharge_eligibility_and_power11_gate():

@@ -93,7 +93,7 @@ priors chosen for behavior on live maps, not tuned parameters — treat them as 
 `/api/recommend` personalizes to the player's roster + history (mastery, personal win-rate),
 while `/api/top_picks` is the pure population meta — every brawler at a full loadout,
 **no roster filtering**. Mastery is loadout-forward — it ranks *investment* (which star powers /
-gadgets / gears / buffies you own, plus comfort), not power level. Power is enforced separately as
+gadgets / gears you own, plus comfort), not power level. Power is enforced separately as
 a hard **fieldability gate**: Ranked doesn't normalize brawlers to a fixed power, and each bracket
 blocks selecting a brawler below a floor (Power 9 through Diamond, Power 11 from Mythic up), so
 `_roster_for` drops owned brawlers under `tiers.min_power_for_bracket(bracket)` before they're ever

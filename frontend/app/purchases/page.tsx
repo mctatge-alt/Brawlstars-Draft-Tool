@@ -5,7 +5,7 @@ import SiteFooter from "@/components/SiteFooter";
 export const metadata: Metadata = {
   title: "What to Upgrade Next — Brawl Stars Purchase Advisor | Brawl Draft",
   description:
-    "Enter your Brawl Stars tag and see your highest-value next purchases — gadgets, star powers, gears, hypercharges, buffies, power-11 upgrades, and new meta brawlers — ranked by ranked win-rate impact.",
+    "Enter your Brawl Stars tag and see your highest-value next purchases — gadgets, star powers, gears, hypercharges, power-11 upgrades, and new meta brawlers — ranked by ranked win-rate impact.",
   alternates: { canonical: "/purchases" },
   openGraph: {
     type: "website",

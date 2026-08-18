@@ -2,7 +2,7 @@
 
 // "What to upgrade next" — enters a player tag, fetches their live roster (owned items + power
 // levels via the keyed roster tunnel), and ranks the highest-value purchases they haven't made:
-// power-11 climbs, gadgets, star powers, gears, hypercharges, buffies, and new-brawler unlocks.
+// power-11 climbs, gadgets, star powers, gears, hypercharges, and new-brawler unlocks.
 // The inverse of the board's loadout popover — it surfaces the best UNOWNED item rather than
 // locking it. Scored by meta strength × purchase impact on the backend (see engine/purchases.py);
 // cost is shown as context only (the API can't see your currency balances).
@@ -23,7 +23,6 @@ const NAV = [
 const KIND: Record<PurchaseKind, { label: string; color: string; glyph: string }> = {
   new_brawler:   { label: "UNLOCK",       color: "var(--blue)",   glyph: "◈" },
   hypercharge:   { label: "HYPERCHARGE",  color: "var(--gold)",   glyph: "⚡" },
-  buffie:        { label: "BUFFIE",       color: "var(--violet)", glyph: "✦" },
   star_power:    { label: "STAR POWER",   color: "var(--accent)", glyph: "★" },
   gadget:        { label: "GADGET",       color: "var(--green)",  glyph: "⚙" },
   gear:          { label: "GEAR",         color: "var(--muted)",  glyph: "⛭" },

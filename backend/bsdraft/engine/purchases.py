@@ -1,7 +1,7 @@
 """Personalized "what to buy/upgrade next" advisor.
 
 Given a player's ownership snapshot (power level + owned gadgets / star powers / gears /
-hypercharge / buffie slots per brawler, from ``/players/{tag}``) this enumerates the purchases
+hypercharge per brawler, from ``/players/{tag}``) this enumerates the purchases
 they *haven't* made yet and ranks them by expected competitive value. It is the inverse of
 :mod:`bsdraft.engine.loadout`: the loadout advisor tells you which owned item to *equip*; this
 tells you which unowned item is most worth *acquiring*.
@@ -61,15 +61,13 @@ class OwnedState:
     gadgets: FrozenSet[int] = frozenset()
     gears: FrozenSet[str] = frozenset()          # normalized owned gear names
     has_hypercharge: bool = False
-    buffies_have: int = 0
-    buffies_total: int = 0
 
 
 @dataclass
 class _Rec:
     brawler_id: int
     brawler_name: str
-    kind: str                    # power_upgrade|gadget|star_power|gear|hypercharge|buffie|new_brawler
+    kind: str                    # power_upgrade|gadget|star_power|gear|hypercharge|new_brawler
     value_score: float
     meta_winrate: float
     confidence: str              # "measured" | "heuristic" | "eligibility_only"
@@ -230,9 +228,9 @@ def recommend_purchases(owned: Dict[int, OwnedState], stats: DraftStats,
         if not st.has_hypercharge and _hypercharge_eligible(economy, b.name):
             recs.append(_hypercharge_rec(b, st, strength, priors, economy))
 
-        # --- buffies: an unfilled buffie slot ---
-        if st.buffies_total > st.buffies_have:
-            recs.append(_buffie_rec(b, st, strength, priors, economy))
+        # Buffies are intentionally not advised: the roster reports which buffies you *own* but not
+        # how many exist per brawler, so a "slot open" can't be told from "no buffie released" (a
+        # brawler like R-T has none). See engine/mastery.py for the same reasoning.
 
     recs.sort(key=lambda r: r.value_score, reverse=True)
     return [r.as_dict() for r in recs[:top]]
@@ -311,17 +309,6 @@ def _hypercharge_rec(b, st, strength, priors, economy) -> _Rec:
     return _Rec(brawler_id=b.id, brawler_name=b.name, kind="hypercharge", value_score=value,
                 meta_winrate=strength, confidence="eligibility_only", cost=cost, rationale=why,
                 gate=gate, target_power=target)
-
-
-def _buffie_rec(b, st, strength, priors, economy) -> _Rec:
-    prior = float(priors.get("buffie", 0.5))
-    value = strength * prior
-    n_left = st.buffies_total - st.buffies_have
-    why = (f"Buy a Buffie for {b.name} — {st.buffies_have}/{st.buffies_total} slots filled, "
-           f"{n_left} to go.")
-    return _Rec(brawler_id=b.id, brawler_name=b.name, kind="buffie", value_score=value,
-                meta_winrate=strength, confidence="eligibility_only",
-                cost=_item_cost(economy, "buffie"), rationale=why)
 
 
 def _new_brawler_rec(b, strength, stats: DraftStats, priors, economy) -> _Rec:

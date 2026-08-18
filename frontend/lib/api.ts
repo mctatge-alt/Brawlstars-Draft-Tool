@@ -43,7 +43,7 @@ export type OwnedBrawler = {
   owned_star_powers: number[]; owned_gadgets: number[]; owned_gears: OwnedGear[];
   // Progression state for the purchase advisor (populated by /api/roster; absent on the recommend
   // path). Optional so older backends / the recommend payload still type-check.
-  power?: number; has_hypercharge?: boolean; buffies_have?: number; buffies_total?: number;
+  power?: number; has_hypercharge?: boolean;
 };
 export type RosterResponse = {
   loaded: boolean; tag: string; name: string; owned: OwnedBrawler[]; error?: string | null;
@@ -60,7 +60,7 @@ export type LoadoutResponse = {
 };
 
 export type PurchaseKind =
-  "power_upgrade" | "gadget" | "star_power" | "gear" | "hypercharge" | "buffie" | "new_brawler";
+  "power_upgrade" | "gadget" | "star_power" | "gear" | "hypercharge" | "new_brawler";
 export type PurchaseRec = {
   brawler_id: number; brawler_name: string; kind: PurchaseKind;
   value_score: number; meta_winrate: number;

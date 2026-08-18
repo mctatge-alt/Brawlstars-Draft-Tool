@@ -12,8 +12,7 @@
     "gadget": { "coins": 1000 },
     "star_power": { "coins": 2000 },
     "gear": { "coins": 1000 },
-    "hypercharge": { "coins": 5000 },
-    "buffie": { "power_points": 2000, "coins": 1000 }
+    "hypercharge": { "coins": 5000 }
   },
 
   "new_brawler_credits": {
@@ -42,7 +41,6 @@
     "star_power_second": 0.40,
     "gear": 0.55,
     "hypercharge": 0.80,
-    "buffie": 0.50,
     "new_brawler": 0.70
   },
 

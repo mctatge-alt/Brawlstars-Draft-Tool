@@ -26,8 +26,6 @@ class OwnedBrawler(BaseModel):
     # recommend path (which omits them) still validates; populated by /api/roster from Mastery.
     power: int = 0
     has_hypercharge: bool = False
-    buffies_have: int = 0
-    buffies_total: int = 0
 
 
 class RecommendRequest(BaseModel):
@@ -227,7 +225,7 @@ class PurchaseRequest(BaseModel):
 class PurchaseRec(BaseModel):
     brawler_id: int
     brawler_name: str
-    kind: str                    # power_upgrade|gadget|star_power|gear|hypercharge|buffie|new_brawler
+    kind: str                    # power_upgrade|gadget|star_power|gear|hypercharge|new_brawler
     value_score: float           # the sort key: meta strength × purchase impact (+ measured edge)
     meta_winrate: float          # the brawler's smoothed win rate across ranked maps
     confidence: str              # "measured" | "heuristic" | "eligibility_only"
