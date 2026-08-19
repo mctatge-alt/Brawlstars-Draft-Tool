@@ -15,11 +15,15 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
   of their mode.
 - **Faster analysis.** The recommend step is ~3.7× faster — the win-probability model now scores
   every candidate in one batched pass instead of one at a time. Identical picks, just quicker.
-- **Press ` (backtick) to jump to your first pick.** A shortcut that skips straight to the first
-  pick slot — handy when there are only a few bans. Typing in the search box is unaffected.
-- **Clearer gear levels in the loadout popover.** Owned-gear tags now read "Lv n/3" with a hover
-  tooltip instead of a bare "Lv3," so it's obvious it's the gear's in-game upgrade level, not a
-  suggestion rank.
+- **Keyboard-first drafting: Tab and arrow keys.** Press **Tab** to jump straight to your first
+  pick, skipping any unused ban slots — handy when only a few bans are used. Browse the brawler
+  grid with the **arrow keys**: press ↓ from the search box to drop into the grid, arrow between
+  brawlers, and hit Enter to place the highlighted one. Tab still steps through form fields (like
+  the tag box) normally and never traps focus, and the same keys work identically on Windows, macOS,
+  and Linux.
+- **Removed the confusing gear "level" from the loadout popover.** Owned gears used to show a bare
+  "Lv3." Brawl Stars removed gear upgrade levels back in 2022 — gears are now a flat purchase at full
+  power — so that number (always 3) meant nothing. Owned gears now just show their name.
 - **Loadout advice now adjusts to the enemy comp.** The hover popover's gadget / star-power / gear
   picks were frozen at pick time; now the drafted enemy team feeds a bounded overlay: class-count
   reads (dive-heavy, 2 Tanks, poke-heavy) plus a CC-heavy read that fires when *every* enemy

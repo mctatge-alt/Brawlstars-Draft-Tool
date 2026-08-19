@@ -257,6 +257,12 @@ select.ctl {
 .group:hover > .tile { border-color: var(--tc, var(--line-strong)); transform: translateY(-1px); }
 .group:active > .tile { transform: translateY(0); }
 
+/* keyboard cursor for the brawler-picker grid (roving-tabindex arrow-key nav): a distinct blue ring
+   on the focused tile. Plain :focus (not :focus-visible) so it's deterministic during arrow nav —
+   and it won't linger after a mouse click, since placing a tile moves focus back to the search box. */
+.pick-tile:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
+.pick-tile:focus > .tile { border-color: var(--blue); }
+
 /* keyboard hint chip */
 .kbd {
   font-family: var(--font-mono);

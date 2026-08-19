@@ -578,6 +578,7 @@ export default function DraftBoard() {
   const [railOk, setRailOk] = useState(true);
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [query, setQuery] = useState("");
+  const [gridFocus, setGridFocus] = useState(0); // roving tab-stop index into the brawler grid (arrow-key nav)
   const [mySeat, setMySeat] = useState<number | null>(null); // which "our" slot is the user (in pick order)
   const [hoverSlot, setHoverSlot] = useState<{ zone: Zone; index: number; rect: SlotRect } | null>(null); // drafted slot under the cursor
   const [loadouts, setLoadouts] = useState<Record<string, LoadoutResponse | "loading">>({}); // cache: `${bid}:${mode}`
@@ -586,6 +587,7 @@ export default function DraftBoard() {
   const [bootNonce, setBootNonce] = useState(0);
   const [slowBoot, setSlowBoot] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const focusSearch = () => searchRef.current?.focus({ preventScroll: true });
 
   useEffect(() => {
@@ -786,28 +788,34 @@ export default function DraftBoard() {
     }
   }, [blindPick, their]);
 
-  // Backtick (`) jumps the active slot to the FIRST pick, skipping any remaining ban slots — handy
-  // when only 3–5 bans are used and you want to move straight into picking. Backtick has no native
-  // key behavior and appears in no brawler name or tag, so it's intercepted globally EXCEPT while
-  // you're actively typing in a text field (one with a non-empty value), so a stray backtick
-  // mid-query isn't stolen. "First pick" = pickSeq[0] (the snake's first pick, or seat 0 under blind pick).
+  // Tab jumps the active slot to the FIRST pick, skipping any remaining ban slots — handy when only
+  // 3–5 bans are used and you want to move straight into picking. Tab is the browser's focus key, so
+  // it's intercepted narrowly to stay accessible: plain Tab only (Shift/Ctrl/Alt/Meta chords pass
+  // through, so Shift+Tab still steps focus back and Alt/⌘-Tab reach the OS), and NEVER from inside an
+  // editable field — the tag box, the search box, and any <select> all keep native Tab traversal, so
+  // you can always tab through the form normally and focus is never trapped. It fires only when focus
+  // is on a non-field element (a board slot, a grid tile, the page), there's an empty first-pick slot
+  // to jump into, and you're not already sitting on it. "First pick" = pickSeq[0] (the snake's first
+  // pick, or seat 0 under blind pick).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "`" || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key !== "Tab" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
       const el = document.activeElement as HTMLElement | null;
       const tag = el?.tagName;
-      const val = el?.isContentEditable ? (el.textContent ?? "") : ((el as HTMLInputElement | null)?.value ?? "");
-      const typing = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el?.isContentEditable) && val.trim() !== "";
-      if (typing) return; // don't steal a backtick the user is typing into a field
+      const isTextField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el?.isContentEditable;
+      if (isTextField) return; // in a form field (tag box, search, select) → native Tab, never hijack or trap
       const first = pickSeq[0];
       if (!first) return;
+      if (active && active.zone === first.zone && active.index === first.index) return; // already there — don't trap focus
+      const firstEmpty = (first.zone === "our" ? our : their)[first.index] == null;
+      if (!firstEmpty) return; // nothing to jump into
       e.preventDefault();
       setActiveOverride({ zone: first.zone, index: first.index });
       focusSearch();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pickSeq]);
+  }, [pickSeq, active, our, their]);
 
   useEffect(() => {
     if (!mapId || !mode) return;
@@ -923,6 +931,31 @@ export default function DraftBoard() {
     [query, filtered, used, myTurn, fieldableSet, boostedSet, step.kind]
   );
 
+  // ---- brawler-grid keyboard navigation (roving tabindex) ----
+  // Arrow keys move a single focus around the grid; Enter/Space on the focused tile places it (native
+  // <button> behavior — no extra handler). ArrowDown from the search box drops into the grid; ArrowUp
+  // off the top row returns to it. A disabled tile (used / can't-field / draft done) isn't focusable,
+  // so nav skips over it and always lands on a placeable brawler.
+  const tileDisabled = (b: Brawler) =>
+    used.has(b.id) || (myTurn && !fieldableSet.has(b.id) && !boostedSet.has(b.id)) || step.kind === "done";
+  // Columns come from the live layout (grid-cols-6 on mobile, 8 from `sm`), so ArrowUp/Down move a
+  // true row regardless of breakpoint.
+  const gridCols = () => {
+    const el = gridRef.current;
+    if (!el) return 6;
+    return getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean).length || 6;
+  };
+  // nearest placeable tile at/after `from`, scanning in `dir` (+1 / −1); −1 if none remain that way
+  const seekTile = (from: number, dir: 1 | -1) => {
+    for (let i = from; i >= 0 && i < filtered.length; i += dir)
+      if (!tileDisabled(filtered[i])) return i;
+    return -1;
+  };
+  const focusTile = (i: number) => {
+    (gridRef.current?.querySelector(`[data-tile="${i}"]`) as HTMLElement | null)?.focus();
+    setGridFocus(i);
+  };
+
   const rotation = useMemo(
     () => (ref?.maps || []).filter((m) => m.games > 0).sort((a, b) =>
       a.mode === b.mode ? b.games - a.games : a.mode.localeCompare(b.mode)),
@@ -980,7 +1013,7 @@ export default function DraftBoard() {
   // ---- status readout config ----
   const statusCfg =
     step.kind === "ban"
-      ? { tag: `BAN ${String(step.index).padStart(2, "0")}/0${BAN_N}`, title: "BAN PHASE", sub: "Ban a threat · tap a suggestion or type to place", accent: "var(--red)", window: "BAN WINDOW" }
+      ? { tag: `BAN ${String(step.index).padStart(2, "0")}/0${BAN_N}`, title: "BAN PHASE", sub: "Ban a threat · type to place · TAB skips to first pick", accent: "var(--red)", window: "BAN WINDOW" }
       : step.kind === "done"
       ? { tag: "DRAFT SET", title: "DRAFT COMPLETE", sub: "Game plan is locked in below", accent: "var(--green)", window: "" }
       : step.side === "us"
@@ -1128,6 +1161,11 @@ export default function DraftBoard() {
                     e.preventDefault();
                     if (query.trim()) { if (topMatch) place(topMatch.id); }
                     else { const top = topPick || topBan; if (top) place(top.brawler_id); }
+                  } else if (e.key === "ArrowDown") {
+                    // drop into the brawler grid and hand off to arrow-key navigation
+                    e.preventDefault();
+                    const t = seekTile(0, 1);
+                    if (t >= 0) focusTile(t);
                   } else if (e.key === "Escape") setQuery("");
                 }}
                 placeholder="TYPE TO PLACE  ·  e.g.  bro ↵"
@@ -1147,11 +1185,30 @@ export default function DraftBoard() {
           {/* BRAWLER GRID — mouse / browse fallback, below the board */}
           <div className="panel p-3 order-3">
             <div className="flex items-center justify-between mb-2.5">
-              <span className="label">{filtered.length} BRAWLERS · TAP OR TYPE ABOVE</span>
+              <span className="label">{filtered.length} BRAWLERS · TAP, TYPE, OR ◂▸ ARROWS</span>
               {myTurn && <span className="mono text-[10px]" style={{ color: "var(--gold)" }}>◈ OWNED{powerFloor === 11 ? " · P11" : ""} + FREE</span>}
             </div>
-            <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
-              {filtered.map((b) => {
+            <div ref={gridRef}
+              onKeyDown={(e) => {
+                const idxAttr = (e.target as HTMLElement).dataset?.tile;
+                if (idxAttr == null) return; // key came from something other than a tile
+                const i = Number(idxAttr), c = gridCols();
+                let target = -1;
+                if (e.key === "ArrowRight") target = seekTile(i + 1, 1);
+                else if (e.key === "ArrowLeft") target = seekTile(i - 1, -1);
+                else if (e.key === "ArrowDown") target = seekTile(i + c, 1);
+                else if (e.key === "ArrowUp") {
+                  target = seekTile(i - c, -1);
+                  if (target < 0) { e.preventDefault(); focusSearch(); return; } // off the top row → back to search
+                } else if (e.key === "Home") target = seekTile(0, 1);
+                else if (e.key === "End") target = seekTile(filtered.length - 1, -1);
+                else if (e.key === "Escape") { e.preventDefault(); focusSearch(); return; } // back to search
+                else return;
+                e.preventDefault();
+                if (target >= 0) focusTile(target);
+              }}
+              className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
+              {filtered.map((b, i) => {
                 const isUsed = used.has(b.id);
                 const isBoosted = boostedSet.has(b.id);
                 // dimmed only on your own pick, when you can't field it — neither at/above the power
@@ -1160,9 +1217,12 @@ export default function DraftBoard() {
                 const restricted = myTurn && !fieldableSet.has(b.id) && !isBoosted;
                 const underPower = restricted && ownedSet.has(b.id);
                 const isTop = topMatch?.id === b.id;
+                // roving tabindex: exactly one tile is a tab stop; arrow keys move focus among the rest
+                const tabStop = i === Math.max(0, Math.min(gridFocus, filtered.length - 1));
                 return (
-                  <button key={b.id} onClick={() => place(b.id)} disabled={isUsed || restricted || step.kind === "done"}
-                    className="group relative disabled:cursor-not-allowed"
+                  <button key={b.id} data-tile={i} tabIndex={tabStop ? 0 : -1} onFocus={() => setGridFocus(i)}
+                    onClick={() => place(b.id)} disabled={tileDisabled(b)}
+                    className="pick-tile group relative disabled:cursor-not-allowed"
                     title={underPower ? `${b.name} · needs Power ${powerFloor} in ${bracket}` : restricted ? `${b.name} · not owned` : isBoosted ? `${b.name} (${b.cls}) · free this season` : `${b.name} (${b.cls})`}>
                     <span className="tile block p-[3px]"
                       style={cssVars({ "--tc": CLASS_COLOR[b.cls] || "#26303f", borderColor: isTop ? "var(--accent)" : undefined, boxShadow: isTop ? "inset 0 0 0 1px var(--accent)" : undefined })}>
