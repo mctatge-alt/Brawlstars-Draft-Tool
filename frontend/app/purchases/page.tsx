@@ -5,14 +5,14 @@ import SiteFooter from "@/components/SiteFooter";
 export const metadata: Metadata = {
   title: "What to Upgrade Next — Brawl Stars Purchase Advisor | Brawl Draft",
   description:
-    "Enter your Brawl Stars tag and see your highest-value next purchases — gadgets, star powers, gears, hypercharges, power-11 upgrades, and new meta brawlers — ranked by ranked win-rate impact.",
+    "Enter your Brawl Stars tag and see your most efficient next purchases — power climbs to your Ranked floor, gadgets, star powers, gears, hypercharges, and new meta brawlers — ranked by ranked win rate per coin, prerequisites included.",
   alternates: { canonical: "/purchases" },
   openGraph: {
     type: "website",
     siteName: "Brawl Draft",
     title: "What to Upgrade Next — Brawl Stars Purchase Advisor",
     description:
-      "Your highest-value next Brawl Stars purchases, ranked by how much they lift your ranked win rate.",
+      "Your most efficient next Brawl Stars purchases, ranked by how much ranked win rate they buy per coin — with every power climb and prerequisite priced in.",
     url: "/purchases",
   },
   twitter: { card: "summary_large_image" },
@@ -27,7 +27,7 @@ export default function PurchasesPage() {
       <div className="flex-1">
         <PurchaseAdvisor />
       </div>
-      <SiteFooter blurb="Upgrade picks fuse measured item win-rates with brawler meta strength" />
+      <SiteFooter blurb="Upgrade picks are ranked by ranked win rate per coin, prerequisites and the Ranked power floor included" />
     </div>
   );
 }

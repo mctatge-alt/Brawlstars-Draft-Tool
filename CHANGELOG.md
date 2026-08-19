@@ -4,6 +4,24 @@ Notable, user-visible changes to [brawldraft.com](https://brawldraft.com). The s
 continuously from `main`, so entries are **dated, not versioned** — newest first. Routine
 retrains, doc edits, and internal refactors are left out unless they changed what users see.
 
+## 2026-08-19
+
+- **Upgrade planner now ranks by value per coin, prerequisites included.** The first cut ranked
+  purchases by raw win-rate value with cost as a side note — so its top suggestion could be a star
+  power on a brawler still at Power 2 with no items, which you couldn't even field. Every
+  recommendation is now the full *package* from where your account actually stands (the power
+  climb to your bracket's floor, a first gadget + star power on an unbuilt brawler, the Starr Road
+  unlock), priced as a whole and ranked by how much ranked win rate it buys per coin. Ranked's
+  power floor is treated as the hard gate it is: below Power 9 (through Diamond) or Power 11
+  (Mythic and up) a brawler gets one "make it ranked-ready" card and no item cards. Your live
+  Ranked tier sets the floor (pin P9/P11 yourself if the lookup fails — unknown assumes Power 11,
+  the safer guess); the bracket's own stats drive the meta read; roster depth discounts a 30th
+  option versus a 1st; this season's free brawlers are discounted; unlocks only appear for the
+  Starr Road tier you can buy from, with credit prices corrected (Epic 925 / Mythic 1,900 /
+  Legendary 3,800 / Ultra Legendary 5,500). Cards show the package steps with per-step cost, a
+  value-per-coin meter, and kind filters (Power / Gadgets / Star Powers / Gears / Hypercharges /
+  Unlocks).
+
 ## 2026-08-18
 
 - **Recommendations now favor the specific map over the game mode.** The mode-archetype nudge

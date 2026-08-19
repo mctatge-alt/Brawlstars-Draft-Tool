@@ -10,7 +10,7 @@ AI ranked-draft assistant for Brawl Stars: a Python win-probability model + draf
 - The deployed API installs `requirements-serve.txt` only — **no torch/sklearn/pandas** in any serve-path module, or the deploy build breaks (512 MB Render free tier).
 - The model has two implementations that must stay in sync: torch training (`models/winprob.py`) and pure-NumPy serving (`models/serve.py`). Change one → change both.
 - `backend/bsdraft/constants.py` and `data/reference.py` stay pure stdlib — no third-party imports.
-- Frontend `npm run dev` hits the **deployed** API by default (`frontend/.env.local`); override `NEXT_PUBLIC_API_BASE=http://localhost:8000` to test local backend changes in-browser. Roster/personalization can't be tested locally at all (CORS) — verify on the deployed site; see [docs/dev-commands.md](docs/dev-commands.md).
+- Frontend `npm run dev` hits the **deployed** API by default (`frontend/.env.local`); override `NEXT_PUBLIC_API_BASE=http://localhost:8000` to test local backend changes in-browser. Roster/personalization only works locally on the home machine via the `backend-local` + `frontend-local-api` launch configs (local API with the key, open CORS); elsewhere verify on the deployed site — see [docs/dev-commands.md](docs/dev-commands.md).
 
 ## Where things live
 

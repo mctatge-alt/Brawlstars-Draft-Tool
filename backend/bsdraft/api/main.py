@@ -361,11 +361,12 @@ async def roster(tag: Optional[str] = None):
 
 @app.post("/api/purchases", response_model=S.PurchasesResponse)
 def purchases(req: S.PurchaseRequest):
-    """Rank a player's highest-value next purchases (power upgrades, gadgets, star powers, gears,
+    """Rank a player's most efficient next purchases (power climbs, gadgets, star powers, gears,
     hypercharges, new-brawler unlocks) from their ownership snapshot. Like /api/recommend,
     the client sends the roster it fetched from the keyed tunnel — the public host can't fetch it
-    itself. Scored by meta strength × purchase impact; cost is shown as context (balances are
-    unknowable). See :mod:`bsdraft.engine.purchases`."""
+    itself. Scored by win-rate value per coin-equivalent with every prerequisite (power climb to
+    the item gate and to the bracket's Ranked power floor, a core build, the unlock) priced into
+    the package; balances stay unknowable. See :mod:`bsdraft.engine.purchases`."""
     owned = {
         e.id: purchases_mod.OwnedState(
             power=e.power,
@@ -376,9 +377,13 @@ def purchases(req: S.PurchaseRequest):
         )
         for e in req.roster
     }
-    recs = _engine.recommend_purchases(owned, top=req.top)
+    bracket = req.rank_bracket if req.rank_bracket in BRACKETS else None
+    floor = purchases_mod.resolve_floor(bracket, req.power_floor, R.load_economy())
+    recs = _engine.recommend_purchases(owned, top=max(0, min(req.top, 200)), rank_bracket=bracket,
+                                       power_floor=floor, min_per_kind=max(0, min(req.min_per_kind, 5)))
     return S.PurchasesResponse(
         tag=req.tag or "", name=req.name or "", scope="ranked",
+        rank_bracket=bracket, power_floor=floor,
         recommendations=[S.PurchaseRec(**r) for r in recs],
     )
 

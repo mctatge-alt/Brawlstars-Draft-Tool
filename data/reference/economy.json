@@ -1,14 +1,14 @@
 {
-  "_comment": "Curated progression economy for the purchase advisor (engine/purchases.py). NONE of this is in any catalog API, and the official player endpoint exposes ownership but never currency balances or prices — so costs/gates/priors are hand-maintained researched constants (verified ~Aug 2026) and WILL drift on balance updates. Treat as approximate: the advisor ranks by meta value and shows cost only as context, so a stale number misinforms the cost label, not the ranking. Candidate for a future patchnotes-fed refresh. See docs/purchase-advisor.md.",
+  "_comment": "Curated progression economy for the purchase advisor (engine/purchases.py). NONE of this is in any catalog API, and the official player endpoint exposes ownership but never currency balances or prices — so costs, gates, priors and scoring knobs are hand-maintained researched constants and WILL drift on balance updates. Since 2026-08-19 the advisor ranks by VALUE PER COST, so a stale price now misranks, not just mislabels — keep costs fresh (verified against the Brawl Stars wiki + Supercell release notes 2026-08-19; nothing in 2025–2026 changed the upgrade/item prices). Every section has a code fallback in engine/purchases.py (_DEFAULT_*), overlaid per key by this file, so a missing/partial section degrades to the defaults rather than to a free package. See docs/purchase-advisor.md.",
 
   "power_cost_cumulative": {
-    "_comment": "Cumulative cost to REACH a given power level, indexed by level 0..11 (0 and 1 are 0). Cost to upgrade current->target = arr[target] - arr[current]. Classic per-step values; to 9 = 1410 PP + 3090 coins, 9->11 = 2330 PP + 4675 coins.",
+    "_comment": "Cumulative cost to REACH a given power level, indexed by level 0..11 (0 and 1 are 0). Cost to upgrade current->target = arr[target] - arr[current]. Per-step PP 20/30/50/80/130/210/340/550/890/1440, coins 20/35/75/140/290/480/800/1250/1875/2800; to 9 = 1410 PP + 3090 coins, 9->11 = 2330 PP + 4675 coins.",
     "power_points": [0, 0, 20, 50, 100, 180, 310, 520, 860, 1410, 2300, 3740],
     "coins":        [0, 0, 20, 55, 130, 270, 560, 1040, 1840, 3090, 4965, 7765]
   },
 
   "item_costs": {
-    "_comment": "Coin/PP price to buy one item. Gear = the universal Super Rare tier (Epic/Mythic gears are being retired/refunded through 2026, so they're not recommended). Hypercharge is a straight coin buy outside events.",
+    "_comment": "Coin price to buy one item. Gear = the universal Super Rare tier (Epic 1500 / Mythic 2000 gears still exist for brawlers without Buffies but are being removed+refunded as Buffies roll out, so they're not recommended). Hypercharge is a straight coin buy outside its launch-week gem offer.",
     "gadget": { "coins": 1000 },
     "star_power": { "coins": 2000 },
     "gear": { "coins": 1000 },
@@ -16,17 +16,15 @@
   },
 
   "new_brawler_credits": {
-    "_comment": "Starr Road credit cost to unlock a brawler, keyed by the reference `rarity` name. Approximate/balance-sensitive.",
-    "Common": 10,
-    "Rare": 10,
-    "Super Rare": 50,
-    "Epic": 170,
-    "Mythic": 430,
-    "Legendary": 860
+    "_comment": "Starr Road credit cost to unlock a brawler, keyed by the reference `rarity` name (wiki Brawler Costs table, 2026-08-19). Rare / Super Rare / Common are deliberately ABSENT: since the 2025-06 Trophy Road rework they're Trophy Road rewards, not Starr Road purchases, so an unowned one isn't buyable and gets no unlock rec. The road is walked tier by tier (choices appear within the current rarity), so the advisor only recommends unlocks in the lowest tier that still has an unowned brawler. First-of-a-rarity discounts (community-reported) aren't modeled.",
+    "Epic": 925,
+    "Mythic": 1900,
+    "Legendary": 3800,
+    "Ultra Legendary": 5500
   },
 
   "power_gates": {
-    "_comment": "Power level at which each purchase typically becomes available. Advisory only — surfaced as a 'requires Power N' note and used to fold the power-upgrade cost into a gated item's cost; never a hard filter.",
+    "_comment": "Power level at which each purchase becomes available. Gadget 7 / gear 8 / star power 9 all sit at or below every Ranked power floor (9 ≤Diamond, 11 Mythic+), so in practice only the hypercharge gate bites — a brawler below the floor is handled by the floor itself (one ranked-ready package, no item recs).",
     "gadget": 7,
     "gear": 8,
     "star_power": 9,
@@ -34,14 +32,30 @@
   },
 
   "impact_priors": {
-    "_comment": "0..1 prior for how much win-rate a purchase kind unlocks, multiplied by the brawler's meta strength to rank. A first gadget/star power is build-defining; a second is flexibility (only one star power equips at a time), so it's valued lower. Tunable.",
-    "gadget_first": 0.85,
-    "gadget_second": 0.45,
-    "star_power_first": 0.90,
-    "star_power_second": 0.40,
-    "gear": 0.55,
-    "hypercharge": 0.80,
-    "new_brawler": 0.70
+    "_comment": "Relative win-rate LIFT each purchase kind realizes on a brawler you field, in arbitrary units (only the ratios matter; think rough percentage points). Multiplied by the brawler's meta factor × depth factor, then divided by the package's coin-equivalent cost to rank. Shape from 2025–26 player consensus: first star power ≳ first gadget (build-defining, cheap) > hypercharge (biggest single spike, but 5k — priced so it beats a second copy or a core gear on a marginally stronger brawler per coin) > gears (small, steady) > second copies (flexibility). A spare gear (both slots filled) is only ever recommended on a significant positive measured delta. `access` = a bare brawler being fieldable at all; a ranked-ready package is access + the items it realizes. `power_level` = real stats per level above the floor (+10% of base each; 9→11 ≈ +11% HP/dmg); `readiness` = the share of a brawler's ranked-ready value a ≤Diamond climb to 11 earns now (you'll need Power 11 to keep fielding it from Mythic). The keys `access`, `power_level`, `gear_core` mark this section as v2-shaped — without them the engine ignores the whole section (a legacy 0..1 table would mix units). Tunable.",
+    "gadget_first": 3.0,
+    "gadget_second": 0.6,
+    "star_power_first": 3.5,
+    "star_power_second": 0.6,
+    "gear_core": 0.7,
+    "gear_extra": 0.25,
+    "hypercharge": 6.0,
+    "power_level": 1.5,
+    "access": 3.0,
+    "readiness": 0.5
+  },
+
+  "scoring": {
+    "_comment": "Knobs for value-per-cost ranking. meta factor = exp((winrate − meta_center) / meta_scale): live ranked-pool strengths run ~.44–.59 (p10 .466 / median .498 / p90 .535) ⇒ factors ~.64–2.0, so kind structure still dominates and meta re-orders within a kind. resource_weights convert everything to coin-equivalents: coins are the common bottleneck; power points ride along at ~2 coins per PP in the upgrade table and accrue faster, so they're weighted half; credits have no other use (a separate budget) so 1.0 is a placeholder — unlocks are kept discoverable by the API's min_per_kind reservation and the page's kind filter, not by this weight. depth: the first `depth_free` stronger fieldable brawlers cost nothing, then value decays 1/(1+(n−free)/k) — your top options are all full value, your 30th is worth ~1/3 (counted build-weighted, overall AND in the brawler's best ranked mode, where each mode rate is first shrunk toward the brawler's overall rate by `mode_shrink_games` pseudo-games so a 30-game blip can't make a 46% brawler 'depth-free' while a 400-game specialist keeps most of its edge; modes need ≥100 real games to count). delta_scale: a ±10pp significant measured delta doubles/halves a SECOND item (a first item's delta only picks which one). boosted_discount applies to every rec on a brawler that's free at Power 11 this season. unknown_floor: the floor assumed when neither the rank nor an explicit floor is known (11 = the safer failure).",
+    "meta_center": 0.50,
+    "meta_scale": 0.125,
+    "resource_weights": { "coins": 1.0, "power_points": 0.5, "credits": 1.0 },
+    "depth_free": 8,
+    "depth_k": 12,
+    "mode_shrink_games": 300,
+    "delta_scale": 0.10,
+    "boosted_discount": 0.5,
+    "unknown_floor": 11
   },
 
   "hypercharge_availability": {

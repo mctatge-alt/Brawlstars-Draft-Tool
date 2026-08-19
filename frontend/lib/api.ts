@@ -65,17 +65,27 @@ export type LoadoutResponse = {
 
 export type PurchaseKind =
   "power_upgrade" | "gadget" | "star_power" | "gear" | "hypercharge" | "new_brawler";
+export type PurchaseStep = { kind: PurchaseKind; label: string; cost: Record<string, number> };
 export type PurchaseRec = {
   brawler_id: number; brawler_name: string; kind: PurchaseKind;
-  value_score: number; meta_winrate: number;
+  value_score: number;                       // the sort key: win-rate lift per 1,000 coin-equivalents
+  value_lift: number;                        // relative lift the whole package realizes
+  cost: Record<string, number>;              // the package incl. prerequisites, e.g. { coins: 4050, power_points: 890 }
+  cost_equiv?: number | null;                // coin-equivalents (null ⇒ no price known)
+  cost_estimated?: boolean;                  // a step had no known price and got a nominal one
+  meta_winrate: number;
   confidence: "measured" | "heuristic" | "eligibility_only";
-  cost: Record<string, number>;              // e.g. { coins: 2000, power_points: 890 }
   rationale: string;
+  steps?: PurchaseStep[];                    // the package in purchase order (1 step = a plain buy)
   item_id: number | null; item_name: string | null; target_power: number | null;
   item_delta: number | null; gate: string | null;
 };
 export type PurchasesResponse = {
-  tag: string; name: string; scope: string; recommendations: PurchaseRec[];
+  tag: string; name: string; scope: string;
+  // Optional so a not-yet-redeployed backend still type-checks (Pages and Render roll separately).
+  rank_bracket?: string | null;              // bracket the power floor came from (null ⇒ unknown)
+  power_floor?: number;                      // Power an owned brawler needs to be fieldable (9 or 11)
+  recommendations: PurchaseRec[];
 };
 
 export type RankInfo = {
@@ -179,14 +189,22 @@ export async function recommend(body: RecommendBody): Promise<RecommendResponse>
 
 export async function getPurchases(
   roster: OwnedBrawler[], tag?: string | null, name?: string | null, top = 24,
+  rankBracket?: string | null, minPerKind = 0, powerFloor?: 9 | 11 | null,
 ): Promise<PurchasesResponse> {
   // Scored on API_BASE (holds the stats + item win-rate table); the roster was fetched from
   // ROSTER_BASE (the keyed tunnel) and is POSTed here, mirroring the recommend path — the public
-  // backend can't fetch a roster itself (IP-locked out of Supercell).
+  // backend can't fetch a roster itself (IP-locked out of Supercell). rank_bracket sets the
+  // Ranked power floor (9 through Diamond, 11 from Mythic up) that decides what's fieldable and
+  // picks the bracket's stats table; power_floor pins the floor explicitly (user override); with
+  // neither, the backend assumes the stricter Power 11.
   const res = await fetch(`${API_BASE}/api/purchases`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ roster, tag: tag || null, name: name || null, top }),
+    body: JSON.stringify({
+      roster, tag: tag || null, name: name || null, top,
+      rank_bracket: rankBracket || null, min_per_kind: minPerKind,
+      power_floor: powerFloor || null,
+    }),
   });
   if (!res.ok) throw new Error(`purchases: ${res.status}`);
   return res.json();

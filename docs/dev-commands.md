@@ -73,11 +73,16 @@ local uvicorn. To test local backend changes in-browser, override
 `NEXT_PUBLIC_API_BASE=http://localhost:8000`. The var is inlined at build time for the
 static export.
 
-### Roster/personalization can't be tested in local dev (as of 2026-08-13)
+### Roster/personalization in local dev — needs the local-only API (home machine)
 
 Anything gated on a loaded roster — the "I'm pick" seat checkboxes, owned-item filtering in the
-loadout popover, mastery weighting — is **dead on `localhost:3000`** and must be verified against
-the deployed site. `npm run dev` shows `⚠ roster service is down — personalization is off`.
+loadout popover, mastery weighting, the `/purchases` advisor — is **dead on a plain
+`npm run dev`** (`⚠ roster service is down — personalization is off`). On the home machine it
+works with the two `.claude/launch.json` configs (verified 2026-08-19): start `backend-local`
+(uvicorn on 127.0.0.1:8099 with `CORS_ORIGINS=*`; it reads the key from `.env`, builds stats in
+~3 min) and `frontend-local-api` (`NEXT_PUBLIC_API_BASE=http://127.0.0.1:8099`; `ROSTER_BASE`
+falls back to it, so roster, rank and purchases all resolve locally). Elsewhere, verify on the
+deployed site.
 
 Why: `getRoster`/`getRank` go to `NEXT_PUBLIC_ROSTER_BASE`, which falls back to
 `NEXT_PUBLIC_API_BASE` (Render) when unset — and Render has no Supercell token, so it can only
@@ -92,14 +97,13 @@ curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" "https://roster.bra
 
 If you later want this working locally, in preference order:
 
-1. **Second local-only API** (keeps the public surface untouched — preferred). Run a second
-   uvicorn bound to loopback with open CORS, and point dev at it. `.claude/launch.json` already
-   has a `frontend-local-api` config aimed at port 8099 for roughly this.
+1. **Second local-only API** (keeps the public surface untouched — this is what the
+   `backend-local` + `frontend-local-api` launch configs do, and it works). By hand:
    ```bash
    CORS_ORIGINS='*' PYTHONPATH=backend .venv/bin/uvicorn bsdraft.api.main:app --host 127.0.0.1 --port 8099
    ```
-   then `NEXT_PUBLIC_ROSTER_BASE=http://127.0.0.1:8099` in `frontend/.env.local`. Same machine,
-   same key, so rosters load fully. Don't expose 8099 through the tunnel.
+   then `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8099` for the frontend (`ROSTER_BASE` falls back
+   to it). Same machine, same key, so rosters load fully. Don't expose 8099 through the tunnel.
 2. **Add `http://localhost:3000` to `CORS_ORIGINS`** in `com.bsdraft.api.plist`, then
    `launchctl bootout` + `bootstrap` (a plist edit — `kickstart -k` won't re-read it; see
    [../deploy/roster-tunnel.md](../deploy/roster-tunnel.md)). One line, no extra process, but it

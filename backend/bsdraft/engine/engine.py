@@ -56,12 +56,16 @@ class DraftEngine:
         return scored[:top]
 
     def recommend_purchases(self, owned: Dict[int, "purchases_mod.OwnedState"],
-                            top: int = 20) -> List[dict]:
-        """Rank a player's highest-value next purchases from their ownership snapshot. Delegates to
-        :mod:`bsdraft.engine.purchases`, feeding it the loaded stats + item win-rate table (the
-        table degrades to None when unbuilt, so the advisor falls back to economy priors)."""
+                            top: int = 20, rank_bracket: Optional[str] = None,
+                            power_floor: Optional[int] = None, min_per_kind: int = 0) -> List[dict]:
+        """Rank a player's most efficient next purchases from their ownership snapshot and Ranked
+        bracket (which sets the power floor and picks the bracket's stats table, like a draft).
+        Delegates to :mod:`bsdraft.engine.purchases`, feeding it the stats + item win-rate table
+        (the table degrades to None when unbuilt, so the advisor falls back to economy priors)."""
+        stats = self.bracket_stats.get(rank_bracket, self.stats) if rank_bracket else self.stats
         return purchases_mod.recommend_purchases(
-            owned, self.stats, itemstats=itemstats_mod.get_itemstats(), top=top)
+            owned, stats, itemstats=itemstats_mod.get_itemstats(), top=top,
+            rank_bracket=rank_bracket, power_floor=power_floor, min_per_kind=min_per_kind)
 
     def composition_report(self, state: DraftState) -> dict:
         return composition_mod.analyze(state)

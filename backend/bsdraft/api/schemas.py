@@ -219,25 +219,43 @@ class LoadoutResponse(BaseModel):
 class PurchaseRequest(BaseModel):
     """A player's ownership snapshot (fetched by the client from the keyed roster tunnel) to rank
     next purchases against. The public backend can't fetch the roster itself (IP-locked out of
-    Supercell), so the client bridges it here — the same pattern as ``RecommendRequest.roster``."""
+    Supercell), so the client bridges it here — the same pattern as ``RecommendRequest.roster``.
+    ``rank_bracket`` sets the Ranked power floor (Power 9 through Diamond, 11 from Mythic up) that
+    decides which owned brawlers are fieldable at all — and picks the bracket's stats table;
+    ``power_floor`` (9 or 11) pins the floor explicitly (a user override, or the client's choice
+    when the rank lookup failed). Unknown both ⇒ the stricter Power-11 floor is assumed."""
     roster: List[OwnedBrawler] = []
     tag: Optional[str] = None
     name: Optional[str] = None
+    rank_bracket: Optional[str] = None
+    power_floor: Optional[int] = None
     top: int = 20
+    min_per_kind: int = 0        # reserve this many best-of-kind slots so no kind is starved out
+
+
+class PurchaseStep(BaseModel):
+    """One purchase inside a rec's package — e.g. the Power 9→11 climb a hypercharge needs."""
+    kind: str
+    label: str
+    cost: Dict[str, int] = {}
 
 
 class PurchaseRec(BaseModel):
     brawler_id: int
     brawler_name: str
     kind: str                    # power_upgrade|gadget|star_power|gear|hypercharge|new_brawler
-    value_score: float           # the sort key: meta strength × purchase impact (+ measured edge)
+    value_score: float           # the sort key: win-rate lift per 1,000 coin-equivalents
+    value_lift: float = 0.0      # relative win-rate lift the whole package realizes
+    cost: Dict[str, int] = {}    # package price incl. prerequisites, e.g. {"coins": 4050, "power_points": 890}
+    cost_equiv: Optional[float] = None   # the package in coin-equivalents (None ⇒ no price known)
+    cost_estimated: bool = False         # a step had no known price and was given a nominal one
     meta_winrate: float          # the brawler's smoothed win rate across ranked maps
     confidence: str              # "measured" | "heuristic" | "eligibility_only"
-    cost: Dict[str, int] = {}    # fixed price, e.g. {"coins": 2000} — context only (balances unknowable)
     rationale: str = ""
+    steps: List[PurchaseStep] = []       # the package, in purchase order
     item_id: Optional[int] = None
     item_name: Optional[str] = None
-    target_power: Optional[int] = None   # power level a gate implies, e.g. 11 for a hypercharge
+    target_power: Optional[int] = None   # power level the package climbs to, e.g. 11 for a hypercharge
     item_delta: Optional[float] = None   # measured win-rate edge when confidence == "measured"
     gate: Optional[str] = None           # e.g. "requires Power 9"
 
@@ -246,6 +264,8 @@ class PurchasesResponse(BaseModel):
     tag: str = ""
     name: str = ""
     scope: str = "ranked"        # recommendations are meta-valued across the ranked map pool
+    rank_bracket: Optional[str] = None   # the bracket the power floor was taken from (None ⇒ unknown)
+    power_floor: int = 11                # Power level an owned brawler needs to be fieldable here
     recommendations: List[PurchaseRec] = []
 
 
