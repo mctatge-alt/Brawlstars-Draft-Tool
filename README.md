@@ -245,4 +245,4 @@ Supercell Oy.
 
 ## License
 
-[MIT](LICENSE) © 2026 Mitchell Tatge
+[MIT](LICENSE) © 2026 [Mitchell Tatge](https://github.com/mctatge)
