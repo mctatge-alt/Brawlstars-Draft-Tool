@@ -6,6 +6,13 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 ## 2026-08-20
 
+- **Tab jumps to your first pick on the first press.** The shortcut skipped any unused ban slots as
+  advertised, but refused to fire while the cursor sat in the type-to-place box — which is exactly
+  where the board parks it on load and after every placement. So the first Tab merely walked focus
+  into the brawler grid, and only the second one jumped. It now fires from that box. Every other
+  field (the tag box, the map picker) still tabs through normally, and focus is never trapped: once
+  the cursor is on your first pick, Tab goes back to plain focus traversal.
+
 - **Looking up your Ranked tier no longer takes the whole site down.** The rank lookup loads an
   index of every crawled player's tier — 2.5 million of them now. Decoding it briefly needed
   ~350 MB for a 28 MB result, which was over the API's memory limit, so the server was killed and

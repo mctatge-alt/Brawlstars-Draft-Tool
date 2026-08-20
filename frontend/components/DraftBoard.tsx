@@ -796,19 +796,22 @@ export default function DraftBoard() {
   // Tab jumps the active slot to the FIRST pick, skipping any remaining ban slots — handy when only
   // 3–5 bans are used and you want to move straight into picking. Tab is the browser's focus key, so
   // it's intercepted narrowly to stay accessible: plain Tab only (Shift/Ctrl/Alt/Meta chords pass
-  // through, so Shift+Tab still steps focus back and Alt/⌘-Tab reach the OS), and NEVER from inside an
-  // editable field — the tag box, the search box, and any <select> all keep native Tab traversal, so
-  // you can always tab through the form normally and focus is never trapped. It fires only when focus
-  // is on a non-field element (a board slot, a grid tile, the page), there's an empty first-pick slot
-  // to jump into, and you're not already sitting on it. "First pick" = pickSeq[0] (the snake's first
-  // pick, or seat 0 under blind pick).
+  // through, so Shift+Tab still steps focus back and Alt/⌘-Tab reach the OS), and of the editable
+  // fields only the brawler search box is hijacked. That box is where focus lives for the whole draft
+  // (the board focuses it on load and after every placement), so exempting it cost a wasted press: the
+  // first Tab merely walked focus into the brawler grid and only the second one jumped. Every other
+  // field — the tag box, any <select>, contenteditable — keeps native Tab traversal.
+  // Focus is still never trapped: the jump is one-shot, because the next Tab finds the cursor already
+  // on the first pick and falls through to the browser. It fires only when there's an empty first-pick
+  // slot to jump into and you're not already sitting on it. "First pick" = pickSeq[0] (the snake's
+  // first pick, or seat 0 under blind pick).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Tab" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
       const el = document.activeElement as HTMLElement | null;
       const tag = el?.tagName;
-      const isTextField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el?.isContentEditable;
-      if (isTextField) return; // in a form field (tag box, search, select) → native Tab, never hijack or trap
+      const isField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el?.isContentEditable;
+      if (isField && el !== searchRef.current) return; // other form fields (tag box, selects) → native Tab
       const first = pickSeq[0];
       if (!first) return;
       if (active && active.zone === first.zone && active.index === first.index) return; // already there — don't trap focus
