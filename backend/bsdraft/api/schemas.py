@@ -276,6 +276,10 @@ class RankResponse(BaseModel):
     tier_label: Optional[str] = None    # e.g. "Legendary II"
     bracket: Optional[str] = None       # e.g. "Legendary"
     source: Optional[str] = None        # "dataset" | "live"
+    # True when the tier came from the crawl snapshot *and* the live check that would have
+    # corrected it could not run — the row carries no season stamp, so after a Ranked reset it
+    # reports a tier the player no longer holds. Let the UI mark it rather than state it flatly.
+    stale: bool = False
     error: Optional[str] = None
 
 

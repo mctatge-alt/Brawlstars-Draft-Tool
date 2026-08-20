@@ -459,10 +459,15 @@ function RankWidget({ tag, setTag, rankInfo, loading, onCheck, onClear }: {
         return (
           <span className="mono ml-auto text-[12px] px-2.5 py-1 font-semibold inline-flex items-center gap-1.5 border"
             style={{ background: c + "18", color: c, borderColor: c + "66" }}
-            aria-label={rankInfo.tier_label!}
-            title={(rankInfo.tier_label! + (rankInfo.source === "live" ? " · from a live lookup" : " · from our match data"))}>
+            aria-label={rankInfo.stale ? rankInfo.tier_label! + " (may be out of date)" : rankInfo.tier_label!}
+            title={rankInfo.tier_label! + (rankInfo.source === "live"
+              ? " · from a live lookup"
+              : rankInfo.stale
+                ? " · from our match data, and we couldn't reach the live check — if a new season just started this may be last season's tier"
+                : " · from our match data")}>
             {name.toUpperCase()}
             {sub > 0 && <TierChevrons n={sub} />}
+            {rankInfo.stale && <span className="opacity-60 font-normal" aria-hidden="true">?</span>}
           </span>
         );
       })()}

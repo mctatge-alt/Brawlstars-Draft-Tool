@@ -90,7 +90,11 @@ export type PurchasesResponse = {
 
 export type RankInfo = {
   found: boolean; tag: string; tier: number | null; tier_label: string | null;
-  bracket: string | null; source: string | null; error?: string | null;
+  bracket: string | null; source: string | null;
+  // Set when the tier came from our match data *and* the live lookup that would have corrected
+  // it couldn't run. Crawl rows carry no season stamp, so after a Ranked reset they report a tier
+  // the player has already lost — show it, but don't show it as fact.
+  stale?: boolean; error?: string | null;
 };
 
 export type Health = {

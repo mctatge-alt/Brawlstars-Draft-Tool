@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -278,10 +278,23 @@ def reference():
         S.BrawlerRef(id=b.id, name=b.name, cls=b.cls, rarity=b.rarity, image_url=b.image_url)
         for b in R.load_brawlers()
     ]
+    # `load_ranked_maps()` is the catalog's *not-retired* set — every map still in the game's
+    # files across all modes, ~113 of them. Ranked only rotates a handful per mode per season, so
+    # showing the catalog offers map/mode pairs nobody can queue (e.g. "Heist: Pit Stop"), and the
+    # model has nothing to say about them anyway. Collected ranked games are the only rotation
+    # signal we have — a map with none is one we have never seen played. Same idiom as
+    # `engine.py`'s Brawl Ball pick. Falls back to the full list when stats aren't loaded yet, so
+    # a cold start shows too much rather than nothing.
+    #
+    # Deliberately filtered *here* and not in `load_ranked_maps()`: that function also builds the
+    # model's pinned map vocabulary (`encoders.py`, `export_model.py`), where dropping entries
+    # would shift every embedding row out from under the trained checkpoint.
+    all_maps = R.load_ranked_maps()
+    played = [m for m in all_maps if _engine and _engine.stats.map_games.get(m.id, 0) > 0]
     maps = [
         S.MapRef(id=m.id, name=m.name, mode=m.mode, image_url=m.image_url,
                  games=int(_engine.stats.map_games.get(m.id, 0)) if _engine else 0)
-        for m in R.load_ranked_maps()
+        for m in (played or all_maps)
     ]
     brackets = [b for b in BRACKETS if _engine and b in _engine.bracket_stats]
     return S.ReferenceResponse(brawlers=brawlers, maps=maps, modes=list(RANKED_MODES),
@@ -388,14 +401,25 @@ def purchases(req: S.PurchaseRequest):
     )
 
 
-async def _live_rank(tag_n: str) -> Optional[S.RankResponse]:
+async def _live_rank(tag_n: str) -> Tuple[str, Optional[S.RankResponse]]:
     """Current Ranked tier from a live profile fetch (needs the IP-locked key, so it only
     works local/home or via the keyed tunnel). Reads the profile's ``rankedRank`` — the tier
     the player is at *now* — rather than the battle log, whose per-game tier over-states anyone
-    who lost a promotion game (see :func:`current_ranked_tier`). Returns None when the lookup
-    can't be served or the player hasn't placed this season, so the caller can fall back to the
-    dataset. Cached briefly (``roster_ttl_seconds``) so the frontend re-polling the same tag
-    spares the live API."""
+    who lost a promotion game (see :func:`current_ranked_tier`). Cached briefly
+    (``roster_ttl_seconds``) so the frontend re-polling the same tag spares the live API.
+
+    Returns ``(status, response)`` rather than an Optional, because the caller must tell three
+    outcomes apart and only one of them justifies trusting the dataset:
+
+    * ``"ok"`` — a tier came back; serve it.
+    * ``"unplaced"`` — the profile loaded fine and carries no ``rankedRank``: the player has not
+      placed this season. Their dataset row is from *before* the reset, so falling back to it
+      would report a tier they no longer hold — the exact over-statement this whole live-first
+      path exists to avoid.
+    * ``"unavailable"`` — the lookup could not be served at all (no key on this host, an IP-lock
+      403, a network blip). Nothing was learned about the player, so the dataset is the best
+      guess we have — flagged stale, since it may also predate a reset.
+    """
     hit = _rank_cache.get(tag_n)
     if hit is not None and (time.time() - hit[0]) < settings.roster_ttl_seconds:
         return hit[1]
@@ -403,16 +427,21 @@ async def _live_rank(tag_n: str) -> Optional[S.RankResponse]:
         async with BrawlStarsClient() as client:
             player = await client.get_player(tag_n)
         t = current_ranked_tier(player)
-    except Exception:  # noqa: BLE001 — keyless/offline host or API hiccup; fall back to the dataset
-        return None
+    except Exception:  # noqa: BLE001 — keyless/offline host, IP-lock 403, or API hiccup
+        return ("unavailable", None)
     if not t:
-        return None
-    resp = S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
-                          bracket=bracket_of_tier(t), source="live")
+        # A successful fetch that says "no tier this season" is real information, not a miss.
+        resp = S.RankResponse(found=False, tag=tag_n, source="live",
+                              error="no Ranked games yet this season — place a few to set a tier")
+        out = ("unplaced", resp)
+    else:
+        resp = S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
+                              bracket=bracket_of_tier(t), source="live")
+        out = ("ok", resp)
     if len(_rank_cache) > 512:   # bound growth — one entry per unique tag, TTL alone never frees it
         _rank_cache.clear()
-    _rank_cache[tag_n] = (time.time(), resp)
-    return resp
+    _rank_cache[tag_n] = (time.time(), out)
+    return out
 
 
 @app.get("/api/rank", response_model=S.RankResponse)
@@ -426,14 +455,22 @@ async def rank(tag: str):
     tag_n = normalize_tag(tag)
     if not tag_n:
         return S.RankResponse(found=False, tag="", error="enter a player tag")
+    live_tried = False
     if settings.brawlstars_api_token:
-        live = await _live_rank(tag_n)
-        if live is not None:
+        live_tried = True
+        status, live = await _live_rank(tag_n)
+        # "ok" and "unplaced" are both answers about *this* season — return them as-is. Only
+        # "unavailable" (no answer at all) may fall through to the pre-reset crawl snapshot.
+        if status in ("ok", "unplaced"):
             return live
     t = _rank_index().get(tag_n)
     if t:
         return S.RankResponse(found=True, tag=tag_n, tier=t, tier_label=tier_label(t),
-                              bracket=bracket_of_tier(t), source="dataset")
+                              bracket=bracket_of_tier(t), source="dataset",
+                              # A dataset row is a crawl snapshot with no season stamp: after a
+                              # reset it over-states. Say so whenever the live check that would
+                              # have corrected it could not run.
+                              stale=live_tried)
     return S.RankResponse(
         found=False, tag=tag_n,
         error="no recent ranked games found" if settings.brawlstars_api_token

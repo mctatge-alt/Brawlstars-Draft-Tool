@@ -4,6 +4,21 @@ Notable, user-visible changes to [brawldraft.com](https://brawldraft.com). The s
 continuously from `main`, so entries are **dated, not versioned** — newest first. Routine
 retrains, doc edits, and internal refactors are left out unless they changed what users see.
 
+## 2026-08-20
+
+- **The map picker now offers only the maps Ranked actually rotates.** It was listing every map
+  still in the game's files for the five ranked modes — 113 of them, including pairs you can't
+  queue, like "Heist: Pit Stop". The list is now the 27 maps that appear in collected ranked
+  games, which is the rotation: four per mode (Gem Grab shows seven while the season boundary
+  straddles two rotations). Maps we've never seen played were ones the model had nothing to say
+  about anyway.
+- **Your Ranked tier no longer reports last season's rank as fact.** On a season reset the live
+  profile lookup is the only source that knows you've been reset — our match data is a crawl
+  snapshot with no season stamp. When that lookup came back "no tier yet this season", the badge
+  quietly fell through to the pre-reset snapshot and showed the tier you'd just lost. It now
+  says you haven't placed. And when the live lookup can't run at all, the badge still shows the
+  snapshot but marks it with a `?` and says so on hover, instead of stating it flatly.
+
 ## 2026-08-19
 
 - **Upgrade planner now ranks by value per coin, prerequisites included.** The first cut ranked
