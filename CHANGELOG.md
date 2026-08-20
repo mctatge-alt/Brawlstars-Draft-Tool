@@ -6,6 +6,12 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 ## 2026-08-20
 
+- **Looking up your Ranked tier no longer takes the whole site down.** The rank lookup loads an
+  index of every crawled player's tier — 2.5 million of them now. Decoding it briefly needed
+  ~350 MB for a 28 MB result, which was over the API's memory limit, so the server was killed and
+  restarted every single time anyone entered a tag: a few minutes of downtime for everyone, per
+  lookup. The index is now decoded in slices, peaking at ~110 MB, with byte-identical results.
+
 - **The map picker now offers only the maps Ranked actually rotates.** It was listing every map
   still in the game's files for the five ranked modes — 113 of them, including pairs you can't
   queue, like "Heist: Pit Stop". The list is now the 27 maps that actually carry their mode's
