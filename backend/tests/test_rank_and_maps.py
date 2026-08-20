@@ -108,7 +108,7 @@ def _engine_with_map_games(map_games):
 
 def test_reference_offers_only_maps_ranked_actually_rotates(monkeypatch):
     # The catalog's not-retired set spans every mode's whole map pool; Ranked rotates a handful.
-    # Collected games are the only rotation signal we have, so a map with none is dropped.
+    # Collected games are the only rotation signal we have.
     all_maps = R.load_ranked_maps()
     played = {m.id: 500 for m in all_maps[:6]}
     monkeypatch.setattr(M, "_engine", _engine_with_map_games(played))
@@ -116,6 +116,53 @@ def test_reference_offers_only_maps_ranked_actually_rotates(monkeypatch):
     assert {m["id"] for m in served} == set(played)
     assert len(served) < len(all_maps)
     assert all(m["games"] > 0 for m in served)
+
+
+def test_a_retired_map_with_leftover_games_is_still_dropped(monkeypatch):
+    # The bug in the first cut: "any games at all" readmits maps from earlier rotations, which
+    # keep a decaying residue in stats that span more history than one season. Observed
+    # 2026-08-20 — Heist's live four sat at 1954-2026 games while retired Pit Stop had 90, and
+    # a games > 0 test happily served it back.
+    by_mode = {}
+    for m in R.load_ranked_maps():
+        by_mode.setdefault(m.mode, []).append(m)
+    mode = next(k for k, v in by_mode.items() if len(v) >= 5)
+    live, retired = by_mode[mode][:4], by_mode[mode][4]
+    games = {m.id: 2000 for m in live}
+    games[retired.id] = 90          # ~4% of the leader: a previous rotation's leftovers
+    monkeypatch.setattr(M, "_engine", _engine_with_map_games(games))
+    served = {m["id"] for m in TestClient(M.app).get("/api/reference").json()["maps"]}
+    assert served == {m.id for m in live}
+    assert retired.id not in served
+
+
+def test_a_quiet_but_current_map_survives_the_cut(monkeypatch):
+    # The threshold has to tolerate ordinary imbalance within a live rotation — some maps in the
+    # pool genuinely draw fewer games. Only an order-of-magnitude gap should read as "retired".
+    by_mode = {}
+    for m in R.load_ranked_maps():
+        by_mode.setdefault(m.mode, []).append(m)
+    mode = next(k for k, v in by_mode.items() if len(v) >= 4)
+    pool = by_mode[mode][:4]
+    games = {m.id: 2000 for m in pool}
+    games[pool[-1].id] = 700        # 35% of the leader — quiet, not gone
+    monkeypatch.setattr(M, "_engine", _engine_with_map_games(games))
+    served = {m["id"] for m in TestClient(M.app).get("/api/reference").json()["maps"]}
+    assert served == {m.id for m in pool}
+
+
+def test_the_cut_is_per_mode_not_global(monkeypatch):
+    # Modes draw wildly different volumes. A single global threshold would wipe out an entire
+    # quiet mode's rotation while keeping a busy mode's leftovers.
+    by_mode = {}
+    for m in R.load_ranked_maps():
+        by_mode.setdefault(m.mode, []).append(m)
+    busy, quiet = list(by_mode)[:2]
+    games = {m.id: 5000 for m in by_mode[busy][:3]}
+    games.update({m.id: 300 for m in by_mode[quiet][:3]})   # 6% of the busy mode's leader
+    monkeypatch.setattr(M, "_engine", _engine_with_map_games(games))
+    served = {m["id"] for m in TestClient(M.app).get("/api/reference").json()["maps"]}
+    assert served == set(games)      # the quiet mode keeps its whole rotation
 
 
 def test_reference_falls_back_to_the_full_catalog_before_stats_load(monkeypatch):

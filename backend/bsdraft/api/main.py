@@ -52,6 +52,11 @@ _personal_cache: dict = {} # tag -> (data_version, PersonalStats|None); rebuilt 
 _personal_locks: dict = {} # tag -> Lock; single-flights the per-tag dataset scan (no stampede)
 _personal_locks_guard = threading.Lock()
 _roster_cache: dict = {}   # normalized tag -> (fetched_at, RosterResponse); short TTL spares the live API
+# Share of its mode's busiest map that a map must reach to count as "in the current rotation".
+# The observed gap between a live map and a retired one is ~20x, so anything from ~0.1 to ~0.5
+# separates them; 0.15 leans toward keeping a map that is merely quiet.
+MIN_SHARE_OF_MODE_LEADER = 0.15
+
 _rank_cache: dict = {}     # normalized tag -> (fetched_at, RankResponse); short TTL on live rank lookups
 
 
@@ -289,8 +294,24 @@ def reference():
     # Deliberately filtered *here* and not in `load_ranked_maps()`: that function also builds the
     # model's pinned map vocabulary (`encoders.py`, `export_model.py`), where dropping entries
     # would shift every embedding row out from under the trained checkpoint.
+    #
+    # The cost of a relative cut is that a map added mid-rotation stays hidden until it has
+    # accumulated its share of games. That is the right way to be wrong here: a map we have
+    # barely seen is one the model has nothing to say about either.
     all_maps = R.load_ranked_maps()
-    played = [m for m in all_maps if _engine and _engine.stats.map_games.get(m.id, 0) > 0]
+    games = {m.id: (_engine.stats.map_games.get(m.id, 0) if _engine else 0) for m in all_maps}
+    # "Has any games at all" is too weak a cut: the stats span more history than one rotation, so
+    # a map retired seasons ago keeps a decaying residue and drifts back into the list. The real
+    # separation is per-mode and enormous — every map in the live rotation sits within ~8% of its
+    # mode's busiest map, while a retiree sits 20x below it (2026-08-20: Heist ran four maps at
+    # 1954-2026 games with Pit Stop on 90, Brawl Ball four at 2059-2183 with Spiraling Out on 71).
+    # Cut on a share of the mode's leader, not an absolute count, so the threshold rides the
+    # crawl's volume instead of needing a retune every time the dataset grows.
+    top_per_mode = {}
+    for m in all_maps:
+        top_per_mode[m.mode] = max(top_per_mode.get(m.mode, 0), games[m.id])
+    played = [m for m in all_maps
+              if games[m.id] >= max(1, MIN_SHARE_OF_MODE_LEADER * top_per_mode[m.mode])]
     maps = [
         S.MapRef(id=m.id, name=m.name, mode=m.mode, image_url=m.image_url,
                  games=int(_engine.stats.map_games.get(m.id, 0)) if _engine else 0)

@@ -8,10 +8,11 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 - **The map picker now offers only the maps Ranked actually rotates.** It was listing every map
   still in the game's files for the five ranked modes — 113 of them, including pairs you can't
-  queue, like "Heist: Pit Stop". The list is now the 27 maps that appear in collected ranked
-  games, which is the rotation: four per mode (Gem Grab shows seven while the season boundary
-  straddles two rotations). Maps we've never seen played were ones the model had nothing to say
-  about anyway.
+  queue, like "Heist: Pit Stop". The list is now the 27 maps that actually carry their mode's
+  ranked games — four per mode (Gem Grab shows seven while the season boundary straddles two
+  rotations). A map that's left the rotation keeps a fading tail of old games, so the cut is
+  relative: every live map sits within ~8% of its mode's busiest, while a retired one sits 20x
+  below. Maps we've barely seen played were ones the model had nothing to say about anyway.
 - **Your Ranked tier no longer reports last season's rank as fact.** On a season reset the live
   profile lookup is the only source that knows you've been reset — our match data is a crawl
   snapshot with no season stamp. When that lookup came back "no tier yet this season", the badge
