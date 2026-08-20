@@ -149,6 +149,19 @@ Held-out validation (158,966 of 1,059,778 matches), full comps:
   gain). Retrains enforce this as a hard gate: `train.py --max-full-delta` (default 0.002)
   aborts without writing artifacts, so the unattended auto-retrain path can't publish or
   baseline a regressed model.
+- **The gate can also lock the model in, and does so silently.** On 2026-08-20 it was found to
+  have refused **38 consecutive** retrains (deltas +0.0022..+0.0031), freezing the served model
+  at 2026-08-12 while `meta_report.json` kept reporting a shifted meta. Two things made it
+  invisible: the only trace was a line in `crawl.out.log`, and the crawler had been IP-blocked
+  for part of that window, so retrains were refitting a dataset that never grew. `collect.py`
+  now counts consecutive failures across restarts and files a `model-stale` issue after three.
+  Before changing the threshold, run `backend/scripts/gate_experiment.py --wait-for-data`: it
+  waits for the crawl to recover, then sweeps `--p-full` x seeds with the gate disabled and
+  separates the three explanations — a frozen dataset, a threshold below the run-to-run noise
+  floor (production trains on one seed, so a wide spread is a coin flip every cycle), or a real
+  ratchet against an incumbent that was a lucky draw. Every trial is scored against the same
+  snapshotted checkpoint and the incumbent is restored afterwards, so the experiment can't
+  replace the served model.
 - **Partial draft states** (whole val split masked to each state; `mean |p−0.5|` is the
   average edge the model claims):
 
