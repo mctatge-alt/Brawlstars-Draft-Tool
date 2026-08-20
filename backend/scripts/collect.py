@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from bsdraft.collect import publish as publisher
 from bsdraft.collect.client import BrawlStarsClient
 from bsdraft.collect.crawler import MATCHES_PATH, Crawler
 from bsdraft.config import settings
-from bsdraft.constants import REPO_ROOT
+from bsdraft.constants import PROCESSED_DIR, REPO_ROOT
 from bsdraft.engine.drift import detect_drift, save_report
 
 
@@ -105,6 +106,72 @@ def _check_meta(retrain_on_shift: bool, publish: bool = False) -> None:
         _retrain()
 
 
+# A retrain can fail the same way every hour — most often train.py's --max-full-delta gate
+# refusing a checkpoint that is a hair worse on full comps. That is the gate doing its job, but a
+# *run* of refusals means the served model is frozen while the meta moves, and the only trace is
+# a line in crawl.out.log that nobody reads. (Found 2026-08-20 after 38 consecutive silent
+# failures left the live model 8 days stale.) Track the streak across restarts and escalate it
+# into a GitHub issue, the same channel the CI watchers use.
+_RETRAIN_STATE_PATH = PROCESSED_DIR / "retrain_state.json"
+_RETRAIN_ALERT_AFTER = 3       # ~3h at the default --loop 3600 — past a transient
+_RETRAIN_REALERT_EVERY = 24    # and once a day after that, so a long stall keeps nagging
+
+
+def _retrain_state() -> dict:
+    try:
+        return json.loads(_RETRAIN_STATE_PATH.read_text())
+    except Exception:  # noqa: BLE001 — absent or corrupt state just starts a fresh streak
+        return {}
+
+
+def _record_retrain(ok: bool, detail: str = "") -> int:
+    """Update the consecutive-failure streak and return it (0 on success)."""
+    state = _retrain_state()
+    streak = 0 if ok else int(state.get("consecutive_failures", 0)) + 1
+    try:
+        _RETRAIN_STATE_PATH.write_text(json.dumps(
+            {"consecutive_failures": streak, "last_detail": detail[-2000:]}, indent=2))
+    except Exception as e:  # noqa: BLE001 — bookkeeping must not kill the crawl loop
+        print(f"retrain state write failed: {e}")
+    return streak
+
+
+def _alert_retrain_stalled(streak: int, detail: str) -> None:
+    """File one issue per stalled streak (then daily), deduped on the open `model-stale` issue."""
+    if streak < _RETRAIN_ALERT_AFTER:
+        return
+    if streak > _RETRAIN_ALERT_AFTER and (streak - _RETRAIN_ALERT_AFTER) % _RETRAIN_REALERT_EVERY:
+        return
+    body = (
+        f"The auto-retrain has failed **{streak} cycles in a row**, so the model served by the "
+        f"live API is frozen while `meta_report.json` keeps reporting a shifted meta.\n\n"
+        f"Most often this is `train.py`'s full-comp regression gate refusing a checkpoint that is "
+        f"marginally worse than the incumbent — see `docs/MODEL_CARD.md`. Check whether the "
+        f"dataset is actually growing before touching the gate: retraining on a frozen dataset "
+        f"reproduces the incumbent plus noise, and the noise alone can exceed the threshold.\n\n"
+        f"Last failure:\n\n```\n{detail[-2000:] or '(no output captured)'}\n```\n"
+    )
+    try:
+        existing = publisher._gh("issue", "list", "--label", "model-stale", "--state", "open",
+                                 "--limit", "1", "--json", "number")
+        if existing.returncode == 0 and json.loads(existing.stdout or "[]"):
+            print(f"retrain stalled ({streak} cycles) — open model-stale issue already tracks it")
+            return
+        title = f"Model retrain stalled — {streak} consecutive failures"
+        res = publisher._gh("issue", "create", "--title", title,
+                            "--label", "model-stale", "--body", body)
+        if res.returncode != 0:
+            # `gh` refuses an unknown label outright. The alert matters more than the taxonomy,
+            # so fall back to an unlabelled issue rather than losing it (the dedupe check above
+            # is label-scoped, so an unlabelled fallback re-files daily — acceptable, and it
+            # stops as soon as someone creates the label).
+            res = publisher._gh("issue", "create", "--title", title, "--body", body)
+        print(f"retrain stalled ({streak} cycles) -> filed issue"
+              if res.returncode == 0 else f"model-stale issue create failed: {res.stderr.strip()}")
+    except Exception as e:  # noqa: BLE001 — alerting is best-effort
+        print(f"model-stale alert failed: {e}")
+
+
 def _retrain() -> None:
     """Retrain, re-export, and publish the win-prob model so it reflects the shifted meta. The
     deployed API (with MODEL_URL set) hot-swaps the published model on its next refresh — no
@@ -113,11 +180,27 @@ def _retrain() -> None:
     scripts = REPO_ROOT / "backend" / "scripts"
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "backend")}
     try:
-        subprocess.run([sys.executable, str(scripts / "train.py")], check=True, env=env)
-        subprocess.run([sys.executable, str(scripts / "export_model.py")], check=True, env=env)
-    except Exception as e:  # noqa: BLE001
-        print(f"retrain failed: {e}")
+        # stderr is captured (and echoed) rather than inherited so the gate's own explanation can
+        # ride along into the alert instead of being lost in crawl.err.log's progress-bar noise.
+        for script in ("train.py", "export_model.py"):
+            res = subprocess.run([sys.executable, str(scripts / script)], check=True, env=env,
+                                 stderr=subprocess.PIPE, text=True)
+            if res.stderr:
+                sys.stderr.write(res.stderr)
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or "").strip()
+        if detail:
+            sys.stderr.write(detail + "\n")
+        streak = _record_retrain(False, detail)
+        print(f"retrain failed ({streak} cycle(s) in a row): {e}")
+        _alert_retrain_stalled(streak, detail)
         return
+    except Exception as e:  # noqa: BLE001
+        streak = _record_retrain(False, str(e))
+        print(f"retrain failed ({streak} cycle(s) in a row): {e}")
+        _alert_retrain_stalled(streak, str(e))
+        return
+    _record_retrain(True)
     try:
         publisher.publish_model()
         print("retrain complete — new model published; the live API hot-swaps it on its next refresh")
