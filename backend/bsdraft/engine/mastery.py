@@ -1,9 +1,14 @@
 """Player roster & mastery.
 
-Personalizes recommendations to brawlers the player actually owns and is invested in:
-power level, personal trophies (comfort), and owned star powers / gadgets / gears / hypercharge.
+Personalizes recommendations to brawlers the player actually owns and is invested in. ``score``
+reads exactly two things: the owned **star powers / gadgets / gears** (``build``) and personal
+trophies (``comfort``). Power level and hypercharge are carried on :class:`Mastery` but stay out
+of the score. Power is excluded on purpose — an under-floor brawler is unfieldable and already
+filtered out upstream, so the comparison here is between brawlers that all clear the floor (see
+the comments on ``score`` and ``gaps``). Hypercharge is simply not part of the ``build`` term;
+it surfaces only as a UI hint via ``gaps``.
 
-Buffies are deliberately **not** scored. The `/players/{tag}` roster does carry a per-brawler
+Buffies are left out too. The `/players/{tag}` roster does carry a per-brawler
 `buffies: {"gadget": bool, "starPower": bool, "hyperCharge": bool}` object, but its `True` flags
 only tell us which buffies the player *owns* — never how many *exist* for that brawler. A brawler
 with no buffie released (e.g. R-T) returns all-`False`, which is indistinguishable from one whose

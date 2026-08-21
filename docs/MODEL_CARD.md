@@ -27,11 +27,17 @@ trained input, not a gap to fill.
   are deduped by a stable key (`battleTime` + sorted player tags), since one match appears in
   up to six players' logs.
 - **Size:** ~1.06M labeled unique ranked matches (1,059,778 at the current retrain). Each row
-  is `(map, mode, team A brawlers[3], team B brawlers[3]) → winner`, plus per-brawler power
-  level, trophies, and the queue type (`soloRanked`/`teamRanked`).
-- **Population & bias:** seeded from top-ladder players, so the data reflects high-skill
-  ranked play. Team-A win-rate is ~0.51 (no material positional label bias). The map pool is
-  whatever has been in ranked rotation while collecting (35 distinct maps in the current set).
+  is `(map, mode, team A brawlers[3], team B brawlers[3]) → winner`. Per-brawler power level,
+  Ranked tier (the API's `trophies` field), and the queue type (`soloRanked`/`teamRanked`) are
+  also stored, but they are **not** model features — the tier drives bracket-stratified
+  empirical stats, and power is retained for analysis only (see *Limitations*).
+- **Population & bias:** the crawler *seeds* from leaderboards but expands via battle-log tags,
+  which diffuses down-ladder — so the collected set is broad ranked play, not top-ladder play.
+  Measured over a 200,000-match sample, the per-match bracket (median player tier) is Diamond
+  44.3%, Mythic 21.0%, Gold 15.1%, Legendary 13.4%, Masters 4.0%, Silver 2.1%, Bronze 0.1% —
+  about **61% of matches are Diamond-or-below**, and Pro did not appear at all. Team-A win-rate
+  is ~0.51 (no material positional label bias). The map pool is whatever has been in ranked
+  rotation while collecting (35 distinct maps in the current set).
 
 ## Inputs / features
 
@@ -206,9 +212,23 @@ Held-out validation (158,966 of 1,059,778 matches), full comps:
   order.
 - **No ban data.** The API never exposes bans, so the model is trained on final picks; ban
   value is inferred separately from win-rate + contest rate.
-- **Population shift.** Trained on top-ladder solo-queue play; lower brackets and premade
-  coordination differ. Rank-bracket stat tables mitigate this on the empirical side; the net
-  itself is not bracket-conditioned.
+- **Population shift.** The net is trained on the pooled crawl, whose mass sits in the middle
+  brackets (~61% Diamond-or-below; see *Data*), not on top ladder — so a single un-conditioned
+  net is fit to a mixture rather than to any one bracket, and it fits neither tail well. Premade
+  coordination also differs from solo queue. Rank-bracket stat tables mitigate this on the
+  empirical side; the net itself is not bracket-conditioned.
+- **Power level and loadout are not model features.** The net sees brawler identity, map, and
+  mode — nothing about how built a brawler is. Power level *is* collected per player-slot
+  (`backend/bsdraft/collect/match.py`) but is dropped during feature construction
+  (`backend/bsdraft/data/dataset.py`), and the equipped star power / gadget / gears /
+  hypercharge are **never recorded in battle logs at all** — which is why per-item win rates
+  have to be inferred indirectly (see [`item-winrate.md`](item-winrate.md)). Consequence: an
+  under-levelled or unhypercharged brawler scores identically to a fully-built Power 11 one.
+  In practice this is closer to a definition than a defect — in a 200,000-match sample
+  (1.2M player-slots) Power 11 is 97.2%, Power 10 1.6% and Power 9 1.2% — so the predicted
+  win% should be read as *near-max-power play*, and it will overstate a brawler you have not
+  finished building. The same holds for the mastery signal, which scores owned loadout and
+  comfort but deliberately not power or hypercharge (`backend/bsdraft/engine/mastery.py`).
 - **Meta drift.** Brawler strength changes with patches; the model needs periodic retraining on
   fresh data (recency weighting mitigates but does not eliminate this).
 
