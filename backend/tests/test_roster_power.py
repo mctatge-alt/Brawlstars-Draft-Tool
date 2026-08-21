@@ -9,7 +9,9 @@ player literally cannot pick (e.g. an un-maxed Bibi in Legendary) is the bug thi
 """
 from __future__ import annotations
 
+import re
 import types
+from pathlib import Path
 
 import bsdraft.api.main as M
 from bsdraft.api import schemas as S
@@ -125,6 +127,121 @@ def test_boosted_brawlers_are_added_and_clear_the_floor():
     assert B9 not in r
     for bid in boosted:
         assert bid in r
+
+
+# --- the wire contract: ``power`` must actually arrive ---------------------------
+#
+# Every gate test above hands ``_roster_for`` a roster that HAS a power on each entry. None of them
+# would notice the one failure mode that disables the gate entirely: the client no longer sending
+# ``power`` at all. ``OwnedBrawler.power`` defaults to 0 and 0 means "unknown, keep it", so a
+# slimmed-down payload doesn't error or warn — it just makes every entry fieldable. The pair below
+# pins that: the first states the consequence, the second guards the client that must not cause it.
+
+def test_missing_power_defeats_the_gate():
+    """Characterization, not an endorsement: an entry with no ``power`` clears any floor.
+
+    This is exactly what a "clean up the recommend payload" change would produce, and why the
+    guard below exists — nothing else in this suite fails when ``power`` stops arriving."""
+    naked = [S.OwnedBrawler(id=B9, mastery=0.5), S.OwnedBrawler(id=E7, mastery=0.5)]
+    req = S.RecommendRequest(map_id=1, mode="Brawl Ball", rank_bracket="Legendary",
+                             personalize=True, roster=naked)
+    r = M._roster_for(req)
+    assert B9 in r and E7 in r, "power-less entries pass the floor — the gate is a no-op"
+
+
+# The client half of the contract. /api/recommend can't tell a slimmed payload from an old client,
+# so the only place this regression is catchable is the source that builds the payload.
+_DRAFT_BOARD = Path(__file__).resolve().parents[2] / "frontend" / "components" / "DraftBoard.tsx"
+
+
+def _const_block(src, name):
+    """Yield each full `const <name> = ...;` definition found in DraftBoard.tsx.
+
+    Accumulates lines from a declaration until its parentheses balance, so a multi-line useMemo
+    comes back whole."""
+    lines = src.splitlines()
+    decl = re.compile(r"\bconst\s+" + re.escape(name) + r"\s*=")
+    for i, ln in enumerate(lines):
+        if not decl.search(ln):
+            continue
+        block, depth = [], 0
+        for cur in lines[i:]:
+            block.append(cur)
+            depth += cur.count("(") - cur.count(")")
+            if depth <= 0 and "(" in "".join(block):
+                break
+        yield "\n".join(block)
+
+
+def _payload_bindings(src):
+    """(what DraftBoard.tsx POSTs as `roster`, {binding name -> its definition}).
+
+    The binding is resolved from the payload sites rather than matched by name, so renaming it
+    doesn't fail this test while changing what it builds does. Identifiers that merely appear in a
+    payload expression but aren't built from the roster (the `myTurn` in `myTurn ? x : null`) fall
+    out on their own: only definitions that read `roster?.owned` are kept."""
+    sent = re.findall(r"\broster:\s*([^,\n]+)", src)
+    idents = {m for expr in sent for m in re.findall(r"[A-Za-z_$][\w$]*", expr)}
+    bindings = {}
+    for name in sorted(idents - {"null", "undefined", "true", "false"}):
+        for block in _const_block(src, name):
+            if "roster?.owned" in block:
+                bindings[name] = block
+                break
+    return sent, bindings
+
+
+def test_recommend_payload_still_carries_power():
+    """The recommend body must POST whole /api/roster entries, never a narrowed projection.
+
+    ``power`` is what the backend's floor gate reads; drop it from the payload and the gate silently
+    passes everything (see ``test_missing_power_defeats_the_gate``). Rather than grep for the word
+    ``power`` — which matches the unrelated ``powerFloor`` and would pass for the wrong reason — this
+    checks the property that actually implies it: the payload is built from ``roster?.owned`` by
+    ``.filter()`` alone, with nothing that reshapes an entry. ``.filter()`` preserves element
+    identity, so what goes on the wire is the /api/roster object whole, ``power`` included. The
+    item-ownership fields ride along the same way; the backend ignores those, but they cost nothing,
+    and slimming them is exactly what would take ``power`` with them.
+
+    This is a source-shape guard, so it catches the realistic regression (a projection introduced to
+    trim the payload), not every conceivable one — a hand-rolled loop that rebuilt entries would slip
+    past it."""
+    if not _DRAFT_BOARD.exists():
+        print(f"skip: {_DRAFT_BOARD} not present (backend checked out without the frontend)")
+        return
+    src = _DRAFT_BOARD.read_text()
+    sent, bindings = _payload_bindings(src)
+
+    assert sent, "nothing is POSTed as `roster` from DraftBoard.tsx any more"
+    assert bindings, (
+        f"none of the values POSTed as `roster` ({', '.join(e.strip() for e in sent)}) is built from "
+        f"`roster?.owned` — the recommend payload must be the roster itself, or `power` never "
+        f"reaches the backend's floor gate"
+    )
+
+    # `=> ({` catches any arrow that returns a fresh object — .map, .flatMap, a reduce — while
+    # `.map(` catches the plain projection even when it's written across lines.
+    reshapes = lambda s: ".map(" in s or "=> ({" in s or "=> Object" in s
+
+    for name, block in bindings.items():
+        assert ".filter(" in block, (
+            f"`{name}` is no longer a plain `.filter()` over the roster, so the entries POSTed to "
+            f"/api/recommend may no longer be whole /api/roster objects:\n{block}"
+        )
+        assert not reshapes(block), (
+            f"`{name}` reshapes roster entries instead of passing them through — if the new shape "
+            f"omits `power`, the backend's Ranked power-floor gate silently becomes a no-op "
+            f"(every entry defaults to power 0 and clears the floor):\n{block}"
+        )
+
+    for expr in sent:
+        assert any(name in expr for name in bindings), (
+            f"`roster: {expr.strip()}` doesn't send the roster binding "
+            f"({'/'.join(bindings)}) — `power` must stay on the wire"
+        )
+        assert not reshapes(expr), (
+            f"`roster: {expr.strip()}` reshapes the payload inline — `power` must stay on the wire"
+        )
 
 
 if __name__ == "__main__":

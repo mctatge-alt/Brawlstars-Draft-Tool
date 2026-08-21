@@ -17,13 +17,25 @@ class OwnedBrawler(BaseModel):
     mastery: float
     gaps: List[str] = []
     # The specific items this player owns on the brawler, so the client can restrict loadout
-    # suggestions on the user's own pick to what they can actually equip. Empty on the recommend
-    # request path (the client only sends id/mastery/gaps there); populated by /api/roster.
+    # suggestions on the user's own pick to what they can actually equip. Populated by /api/roster
+    # and read by /api/purchases. They are *also* on the wire for /api/recommend — the client POSTs
+    # whole roster entries there, not a projection (see ``power``) — but that path ignores them:
+    # ``_roster_for`` in main.py reads only id/mastery/gaps/power. Transmitted-but-unread, not absent.
     owned_star_powers: List[int] = []
     owned_gadgets: List[int] = []
     owned_gears: List[OwnedGear] = []
-    # Progression state the purchase advisor needs to know what's still unbought. Defaulted so the
-    # recommend path (which omits them) still validates; populated by /api/roster from Mastery.
+    # Progression state, populated by /api/roster from Mastery and sent on both request paths.
+    # ``has_hypercharge`` is read only by the purchase advisor, but ``power`` is load-bearing on the
+    # recommend path too and MUST keep arriving there: the Ranked power-floor gate in
+    # ``_roster_for`` is ``power == 0 or power >= floor``, so if the client ever stopped sending it,
+    # the 0 default below would make every entry fieldable — silently turning the gate into a no-op
+    # and recommending brawlers the player cannot select in Ranked. Today's client does send it: the
+    # recommend payload is an unprojected ``.filter()`` over the /api/roster response
+    # (``fieldableOwned`` in frontend/components/DraftBoard.tsx), guarded by
+    # ``test_recommend_payload_still_carries_power`` in backend/tests/test_roster_power.py. The 0
+    # default exists only for older clients that predate the field, where 0 means "unknown" and
+    # keeps the entry rather than hiding a brawler on missing data — it is not a description of
+    # what the current client sends.
     power: int = 0
     has_hypercharge: bool = False
 

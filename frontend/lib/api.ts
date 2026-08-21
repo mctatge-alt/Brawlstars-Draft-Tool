@@ -38,11 +38,18 @@ export type RecommendResponse = {
 export type OwnedGear = { id: number; name: string; level: number };
 export type OwnedBrawler = {
   id: number; mastery: number; gaps: string[];
-  // Specific items the player owns on this brawler — populated by /api/roster (empty on the
-  // recommend path). Used to restrict loadout suggestions on the user's own pick to what they have.
+  // Specific items the player owns on this brawler — populated by /api/roster. Used to restrict
+  // loadout suggestions on the user's own pick to what they have, and read server-side by
+  // /api/purchases. They ride along on the recommend request too (that payload is an unprojected
+  // `.filter()` over these same objects — see `fieldableOwned` in DraftBoard.tsx), where the
+  // backend accepts but ignores them.
   owned_star_powers: number[]; owned_gadgets: number[]; owned_gears: OwnedGear[];
-  // Progression state for the purchase advisor (populated by /api/roster; absent on the recommend
-  // path). Optional so older backends / the recommend payload still type-check.
+  // Progression state from /api/roster, sent on the recommend request as well. `has_hypercharge` is
+  // only used by the purchase advisor, but `power` MUST stay on the recommend payload: the backend
+  // gate is `power == 0 || power >= floor`, so an entry that arrives without `power` defaults to 0
+  // and passes unconditionally — slimming it out of the POST body silently disables the Ranked
+  // power-floor gate. These are optional only because an older backend may not return them; that is
+  // not license to project them away when POSTing.
   power?: number; has_hypercharge?: boolean;
 };
 export type RosterResponse = {
