@@ -1401,7 +1401,7 @@ function TheCall({ kind, r, b, accent, onPlace }: {
       </div>
       <div className="px-3 pb-2 flex gap-3">
         <div className="relative shrink-0">
-          <Avatar b={b} size={72} ring={accent} />
+          <Avatar b={b} size={72} />
           <span className="mono absolute -top-1.5 -left-1.5 text-[9px] font-bold px-1 leading-tight" style={{ background: accent, color: "#0a0a0c" }}>01</span>
         </div>
         <div className="flex-1 min-w-0">
