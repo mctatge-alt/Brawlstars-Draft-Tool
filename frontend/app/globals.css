@@ -105,6 +105,15 @@ body::after {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+/* Ultra Legendary rarity ring: a registered <angle> so the conic border can actually rotate;
+   unregistered fallback renders it as a static gradient. */
+@property --ua { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes ultra-spin { to { --ua: 360deg; } }
+@keyframes ultra-glow {
+  0%, 100% { box-shadow: 0 0 7px 0 rgba(255, 210, 30, 0.35); }
+  33%      { box-shadow: 0 0 7px 0 rgba(53, 224, 255, 0.35); }
+  66%      { box-shadow: 0 0 7px 0 rgba(224, 107, 255, 0.35); }
+}
 
 .anim-fade    { animation: fadeIn 0.35s ease both; }
 .anim-rise    { animation: riseIn 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
@@ -246,6 +255,14 @@ select.ctl {
 
 /* the active slot — pulsing hazard scan ring, squared */
 .slot-active { animation: scan 1.6s ease-in-out infinite; }
+
+/* Ultra Legendary portrait border — the in-game prismatic shimmer (Sirius, Kaze).
+   border-image must come after the border shorthand: the shorthand resets it. */
+.ultra-ring {
+  border: 2px solid #e1fb2a;
+  border-image: conic-gradient(from var(--ua, 0deg), #ffd21e, #8dfb4c, #35e0ff, #e06bff, #ffd21e) 1;
+  animation: ultra-spin 2.4s linear infinite, ultra-glow 4.8s ease-in-out infinite;
+}
 
 /* picker tile */
 .tile {

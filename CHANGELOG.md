@@ -6,6 +6,13 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 ## 2026-08-20
 
+- **Brawler portrait outlines now show rarity, like in-game.** Portrait borders used to repeat the
+  brawler's class color, which the class chips already show. They now use the in-game rarity
+  border colors (Rare green through Legendary yellow), and Ultra Legendary brawlers (Sirius, Kaze)
+  get the game's animated prismatic ring — a rotating conic gradient with a soft color-cycling
+  glow. The picker-grid and top-meta tile hover accents follow rarity too, and the active-slot
+  accent ring still takes precedence while a slot is hot.
+
 - **Tab jumps to your first pick on the first press.** The shortcut skipped any unused ban slots as
   advertised, but refused to fire while the cursor sat in the type-to-place box — which is exactly
   where the board parks it on load and after every placement. So the first Tab merely walked focus

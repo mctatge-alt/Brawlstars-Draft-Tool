@@ -17,6 +17,13 @@ const CLASS_SHORT: Record<string, string> = {
   Tank: "TANK", Assassin: "ASSN", Controller: "CTRL", Marksman: "MARK",
   Support: "SUPP", "Damage Dealer": "DMG", Artillery: "ARTY", Unclassified: "UNCL",
 };
+// Portrait-outline colors matched to the in-game rarity borders (hexes from the brawlify
+// catalog in data/reference/brawlers.json). Ultra Legendary doesn't use its flat hex for the
+// border — it gets the animated prismatic ring (.ultra-ring), like in-game Sirius/Kaze.
+const RARITY_COLOR: Record<string, string> = {
+  Common: "#b9eaff", Rare: "#68fd58", "Super Rare": "#5ab3ff",
+  Epic: "#d850ff", Mythic: "#fe5e72", Legendary: "#fff11e", "Ultra Legendary": "#e1fb2a",
+};
 const SEV_COLOR: Record<string, string> = { critical: "#ff3b30", warn: "#e8c34a", info: "#5aa0ff" };
 // Ranked tier accent colors, low → high (matched to the in-game rank emblems).
 const BRACKET_COLOR: Record<string, string> = {
@@ -157,13 +164,16 @@ function CountUp({ value, className }: { value: number; className?: string }) {
 }
 
 function Avatar({ b, size = 56, dim, ring, active }: { b?: Brawler; size?: number; dim?: boolean; ring?: string; active?: boolean }) {
-  const border = ring || (b ? CLASS_COLOR[b.cls] || "#26303f" : "#26303f");
-  const cls = `object-cover ${active ? "slot-active" : ""}`;
+  const border = ring || (b ? RARITY_COLOR[b.rarity] || "#26303f" : "#26303f");
+  // An explicit ring (the active-slot accent) beats the rarity treatment. The ultra border
+  // lives entirely in .ultra-ring: an inline `border` shorthand would reset its border-image.
+  const ultra = !ring && b?.rarity === "Ultra Legendary";
+  const cls = `object-cover ${active ? "slot-active" : ""} ${ultra ? "ultra-ring" : ""}`;
   if (!b) return <div style={{ width: size, height: size, borderColor: border }} className="bg-[var(--panel2)] border" />;
   return (
     <img src={b.image_url} alt={b.name} title={b.name} width={size} height={size}
       className={cls}
-      style={cssVars({ width: `${size}px`, height: `${size}px`, opacity: dim ? "0.3" : "1", border: `1px solid ${border}`, "--ring": border })} />
+      style={cssVars({ width: `${size}px`, height: `${size}px`, opacity: dim ? "0.3" : "1", border: ultra ? undefined : `1px solid ${border}`, "--ring": border })} />
   );
 }
 
@@ -1233,7 +1243,7 @@ export default function DraftBoard() {
                     className="pick-tile group relative disabled:cursor-not-allowed"
                     title={underPower ? `${b.name} · needs Power ${powerFloor} in ${bracket}` : restricted ? `${b.name} · not owned` : isBoosted ? `${b.name} (${b.cls}) · free this season` : `${b.name} (${b.cls})`}>
                     <span className="tile block p-[3px]"
-                      style={cssVars({ "--tc": CLASS_COLOR[b.cls] || "#26303f", borderColor: isTop ? "var(--accent)" : undefined, boxShadow: isTop ? "inset 0 0 0 1px var(--accent)" : undefined })}>
+                      style={cssVars({ "--tc": RARITY_COLOR[b.rarity] || "#26303f", borderColor: isTop ? "var(--accent)" : undefined, boxShadow: isTop ? "inset 0 0 0 1px var(--accent)" : undefined })}>
                       <Avatar b={b} size={44} dim={isUsed || restricted} />
                     </span>
                     {isTop && <span className="mono absolute top-0 right-0 text-[8px] px-1 leading-tight" style={{ background: "var(--accent)", color: "#0a0a0c" }}>⏎</span>}
@@ -1483,7 +1493,7 @@ function TopMetaStrip({ picks, byId, used, onPick, disabled }: {
                 <button key={p.brawler_id} onClick={() => onPick(p.brawler_id)} disabled={isUsed || disabled}
                   className="group relative disabled:cursor-not-allowed anim-snap"
                   title={`#${i + 1}  ${p.name}\n${pct(p.score)} pick score · ${pct(p.map_winrate)} map win rate\nassumes a full loadout`}>
-                  <span className="tile block p-[2px]" style={cssVars({ "--tc": CLASS_COLOR[p.cls] || "#26303f" })}>
+                  <span className="tile block p-[2px]" style={cssVars({ "--tc": (b && RARITY_COLOR[b.rarity]) || "#26303f" })}>
                     <Avatar b={b} size={40} dim={isUsed} />
                   </span>
                   <span className="mono absolute -top-1 -left-1 text-[8px] px-0.5 leading-tight"
