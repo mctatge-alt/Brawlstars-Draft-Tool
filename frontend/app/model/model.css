@@ -1,0 +1,399 @@
+/* ===========================================================
+   MODEL DOSSIER — page-local styles for /model.
+   Everything is namespaced under `.dossier` so it can use plain
+   semantic class names (.panel, .stat, .cell) without colliding
+   with the board's global utilities in globals.css. Colour tokens,
+   fonts and the blueprint substrate all come from globals.css —
+   only layout, diagram and equation styling lives here.
+   Blue/red are FUNCTIONAL team encodings (team A / team B), which
+   is the whole point of an antisymmetric model.
+   =========================================================== */
+
+.dossier {
+  --gutter: clamp(16px, 4vw, 56px);
+  --measure: 68ch;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+}
+.dossier .page { position: relative; z-index: 1; }
+.dossier .spine {
+  position: fixed;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(59, 130, 246, 0.20) 8%,
+    rgba(120, 140, 170, 0.14) 50%,
+    rgba(255, 59, 48, 0.20) 92%,
+    transparent 100%);
+  z-index: 0;
+  pointer-events: none;
+}
+.dossier h1,
+.dossier h2,
+.dossier h3 { font-weight: 700; text-wrap: balance; margin: 0; letter-spacing: -0.02em; }
+.dossier .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.dossier p { margin: 0 0 1em; max-width: var(--measure); }
+.dossier p:last-child { margin-bottom: 0; }
+.dossier a { color: var(--blue); text-decoration: none; border-bottom: 1px solid rgba(59,130,246,0.35); }
+.dossier a:hover { border-bottom-color: var(--blue); }
+.dossier :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.dossier code,
+.dossier .mono,
+.dossier .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.dossier code {
+  font-size: 0.88em;
+  color: var(--text);
+  background: var(--panel3);
+  border: 1px solid var(--line);
+  padding: 0.08em 0.36em;
+}
+.dossier .tA { color: var(--blue); }
+.dossier .tB { color: var(--red); }
+.dossier .gold { color: var(--gold); }
+.dossier .green { color: var(--green); }
+.dossier .muted { color: var(--muted); }
+.dossier .dim { color: var(--dim); }
+.dossier .wrap { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter); }
+.dossier .narrow { max-width: 780px; }
+.dossier section { border-top: 1px solid var(--line); padding: clamp(48px, 7vw, 96px) 0; }
+.dossier .sec-head {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 0 20px;
+  align-items: start;
+  margin-bottom: 36px;
+}
+.dossier .sec-num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+  padding-top: 10px;
+  border-top: 2px solid var(--line-strong);
+}
+.dossier .sec-head h2 { font-size: clamp(24px, 3.4vw, 34px); line-height: 1.15; }
+.dossier .sec-head .lede { color: var(--muted); margin-top: 10px; font-size: 17px; }
+.dossier .panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: clamp(18px, 2.6vw, 28px);
+}
+.dossier .panel-2 { background: var(--panel2); }
+.dossier .grid-2 { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.dossier .grid-3 { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.dossier .stack { display: flex; flex-direction: column; gap: 20px; }
+.dossier figure { margin: 0; }
+/* The diagrams are laid out on a 1120-wide viewBox and stop being readable much below ~600px,
+   so on a phone they keep their width and pan inside their own scroller — the figcaption stays
+   outside it and wraps normally. */
+.dossier .figscroll { overflow-x: auto; overscroll-behavior-x: contain; }
+.dossier .figscroll svg { display: block; width: 100%; height: auto; min-width: 600px; }
+@media (max-width: 700px) {
+  .dossier .figwrap::before {
+    content: "\25B8 drag to pan";
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 8px;
+  }
+}
+.dossier figcaption {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  max-width: 80ch;
+}
+.dossier figcaption b { color: var(--text); font-weight: 600; }
+.dossier .tablewrap { overflow-x: auto; border: 1px solid var(--line); background: var(--panel); }
+.dossier table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.dossier th,
+.dossier td { text-align: right; padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.dossier th:first-child,
+.dossier td:first-child { text-align: left; }
+.dossier thead th { color: var(--dim); font-weight: 500; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; background: var(--panel2); }
+.dossier tbody tr:last-child td { border-bottom: 0; }
+.dossier tr.hi td { background: rgba(59, 130, 246, 0.07); color: var(--text); }
+.dossier tr.hi td:first-child { box-shadow: inset 2px 0 0 var(--blue); }
+.dossier .stats { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.dossier .stat { background: var(--panel); padding: 16px 18px; }
+.dossier .stat .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.dossier .stat .v { font-family: var(--font-mono); font-size: clamp(20px, 2.4vw, 26px); font-weight: 600; line-height: 1.2; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.dossier .stat .n { font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 4px; }
+.dossier .rule { height: 1px; background: var(--line); border: 0; margin: 28px 0; }
+.dossier .kicker { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
+.dossier .tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+.dossier .tag.on { border-color: rgba(53,196,109,0.45); color: var(--green); }
+.dossier .tag.off { border-color: var(--line); color: var(--dim); }
+.dossier ul.clean { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 14px; }
+.dossier ul.clean li { padding-left: 18px; position: relative; max-width: var(--measure); }
+.dossier ul.clean li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 7px; height: 1px; background: var(--line-strong); }
+@media (prefers-reduced-motion: reduce) {
+.dossier *,
+.dossier *::before,
+.dossier *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+.dossier .masthead { padding: clamp(44px, 7vw, 88px) var(--gutter) clamp(40px, 6vw, 72px); }
+.dossier .masthead h1 {
+  font-size: clamp(34px, 6.2vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  margin: 18px 0 0;
+  max-width: 17ch;
+}
+.dossier .deck { font-size: clamp(16px, 1.5vw, 19px); color: var(--muted); margin-top: 20px; max-width: 62ch; }
+.dossier .masthead-stats { margin-top: 40px; }
+/* The hero equation is an .eqbox already — this wrapper only spaces it off the stat rail. */
+.dossier .hero-eq { margin-top: 40px; }
+.dossier .eq { font-family: var(--font-mono); margin-top: 12px; overflow-x: auto; }
+.dossier .eq-line { display: block; font-size: clamp(13px, 1.55vw, 19px); line-height: 2; white-space: nowrap; }
+.dossier .eq-line.dim-line { color: var(--muted); }
+.dossier .eq-note { color: var(--muted); font-size: 14px; margin-top: 16px; max-width: 74ch; }
+.dossier .eq-note b { color: var(--text); font-family: var(--font-mono); font-weight: 500; }
+.dossier .rail { display: none; }
+@media (min-width: 1400px) {
+.dossier .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    position: fixed;
+    left: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 5;
+  }
+.dossier .rail a {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--dim);
+    border: 0;
+    border-left: 1px solid var(--line);
+    padding: 5px 8px;
+    max-width: 22px;
+    overflow: hidden;
+    white-space: nowrap;
+    transition: max-width 0.22s ease, color 0.22s ease, border-color 0.22s ease;
+    background: var(--bg);
+  }
+.dossier .rail a span { color: var(--dim); }
+.dossier .rail:hover a { max-width: 170px; }
+.dossier .rail a:hover { color: var(--text); border-left-color: var(--accent); }
+.dossier .rail a:hover span { color: var(--accent); }
+}
+.dossier section { scroll-margin-top: 24px; }
+@media (prefers-reduced-motion: no-preference) {
+}
+.dossier .callout { border: 1px solid var(--line-strong); border-left: 2px solid var(--gold); background: var(--panel2); padding: clamp(18px, 2.4vw, 26px); }
+.dossier .callout p { color: var(--muted); margin: 0; }
+.dossier .callout b { color: var(--text); }
+.dossier .tcap { caption-side: top; text-align: left; padding: 12px 14px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); background: var(--panel2); border-bottom: 1px solid var(--line); }
+.dossier .note-line { color: var(--muted); font-size: 15px; max-width: 88ch; }
+.dossier .small-eq { font-size: clamp(12px, 1.4vw, 16px); line-height: 2; overflow-x: auto; white-space: nowrap; color: var(--text); }
+.dossier .big-num { font-family: var(--font-mono); font-size: clamp(40px, 6vw, 58px); font-weight: 700; line-height: 1; margin: 6px 0 16px; }
+.dossier .mt { margin-top: 20px; }
+.dossier .small { font-size: 13px; }
+.dossier ul.clean.tight { gap: 11px; }
+.dossier ul.clean.tight li { font-size: 15px; color: var(--muted); }
+.dossier ul.clean li b { color: var(--text); }
+.dossier ul.clean li { color: var(--muted); }
+.dossier .d { color: var(--muted); }
+.dossier .d text { font-family: var(--font-mono); font-size: 12px; fill: var(--text); }
+.dossier .d .hdr { font-size: 10px; letter-spacing: 0.16em; fill: var(--dim); }
+.dossier .d .tiny { font-size: 10px; letter-spacing: 0.1em; fill: var(--dim); }
+.dossier .d .lbl { font-size: 11px; fill: var(--muted); }
+.dossier .d .cap { font-size: 11px; fill: var(--muted); }
+.dossier .d .big { font-size: 14px; fill: var(--text); }
+.dossier .d .a,
+.dossier .d .a-t { fill: var(--blue); }
+.dossier .d .b,
+.dossier .d .b-t { fill: var(--red); }
+.dossier .d .gold-t { fill: var(--gold); }
+.dossier .d .green-t { fill: var(--green); }
+.dossier .d .box { fill: var(--panel2); stroke: var(--line-strong); }
+.dossier .d .box-k { fill: var(--panel3); stroke: var(--line-strong); }
+.dossier .d .box-a { fill: rgba(59, 130, 246, 0.08); stroke: rgba(59, 130, 246, 0.5); }
+.dossier .d .box-b { fill: rgba(255, 59, 48, 0.08); stroke: rgba(255, 59, 48, 0.5); }
+.dossier .d .node { fill: var(--panel3); stroke: var(--line-strong); }
+.dossier .d .chip { fill: var(--bg); stroke: none; }
+.dossier .d .wire { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+.dossier .d .wire-a { stroke: var(--blue); }
+.dossier .d .wire-b { stroke: var(--red); }
+.dossier .d .tie { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 3 4; }
+.dossier .d .spine-l { stroke: rgba(120, 140, 170, 0.3); stroke-width: 1; stroke-dasharray: 2 7; }
+.dossier .d .mtx { fill: var(--panel2); stroke: var(--line-strong); }
+.dossier .d .mrow line { stroke: var(--line); stroke-width: 1; }
+.dossier .d .hl-a { fill: rgba(59, 130, 246, 0.22); stroke: var(--blue); }
+.dossier .d .hl-g { fill: rgba(232, 195, 74, 0.16); stroke: var(--gold); stroke-dasharray: 4 3; }
+.dossier .d .rowlab { font-size: 11px; letter-spacing: 0.06em; }
+.dossier .d .strip { fill: none; stroke: var(--line-strong); stroke-dasharray: 4 4; }
+.dossier .d .ax { stroke: var(--line-strong); stroke-width: 1; }
+.dossier .d .grid { stroke: var(--line); stroke-width: 1; }
+.dossier .d .tick { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 2 4; }
+.dossier .d .curve-a { fill: none; stroke: var(--blue); stroke-width: 2; }
+.dossier .d .curve-g { fill: none; stroke: var(--gold); stroke-width: 2; stroke-dasharray: 5 4; }
+.dossier .d .dot-a { fill: var(--blue); }
+.dossier .d .dot-g { fill: var(--gold); }
+.dossier .d .bar { fill: rgba(59, 130, 246, 0.3); stroke: var(--blue); }
+.dossier .d .bar-hi { fill: rgba(59, 130, 246, 0.55); }
+.dossier .d .barval { font-size: 12px; fill: var(--text); font-weight: 600; }
+.dossier .d .ece { fill: none; stroke: var(--green); stroke-width: 2; }
+.dossier .d .sg { stroke: var(--bg); stroke-width: 1; }
+.dossier .d .sg-model { fill: #3b82f6; }
+.dossier .d .sg-map { fill: #e8c34a; }
+.dossier .d .sg-cnt { fill: #ff3b30; }
+.dossier .d .sg-syn { fill: #35c46d; }
+.dossier .d .sg-role { fill: #5b6675; }
+.dossier .d .sg-mas { fill: #97a3b4; }
+.dossier .d .sg-per { fill: #454f5c; }
+.dossier .d .sg-emp { fill: #e8c34a; }
+.dossier .d .sgv { font-size: 12px; font-weight: 600; fill: #f2f4f7; }
+.dossier .d .sgv.dark { fill: #0a0a0c; }
+.dossier .d .lg text { fill: var(--dim); }
+.dossier .mirror-tool { display: flex; flex-direction: column; gap: 22px; margin-top: 14px; }
+.dossier .mirror-bars { display: flex; flex-direction: column; gap: 10px; }
+.dossier .mb-row { display: grid; grid-template-columns: 88px minmax(0, 1fr) 62px; align-items: center; gap: 12px; }
+.dossier .mb-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; }
+.dossier .mb-track { height: 26px; background: var(--panel3); border: 1px solid var(--line); position: relative; overflow: hidden; }
+.dossier .mb-fill { position: absolute; top: 0; bottom: 0; width: 50%; }
+.dossier .mb-a { left: 0; background: linear-gradient(90deg, rgba(59, 130, 246, 0.35), rgba(59, 130, 246, 0.85)); }
+.dossier .mb-b { right: 0; background: linear-gradient(270deg, rgba(255, 59, 48, 0.35), rgba(255, 59, 48, 0.85)); }
+.dossier .mb-val { font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+.dossier .slider-wrap { display: flex; flex-direction: column; gap: 10px; }
+.dossier .tiny-lab { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.dossier .tiny-lab b { color: var(--text); font-weight: 600; }
+.dossier input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: ew-resize; }
+.dossier input[type="range"]::-webkit-slider-runnable-track { height: 2px; background: var(--line-strong); }
+.dossier input[type="range"]::-moz-range-track { height: 2px; background: var(--line-strong); }
+.dossier input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 22px; background: var(--gold); margin-top: -10px; border: 0; }
+.dossier input[type="range"]::-moz-range-thumb { width: 12px; height: 22px; background: var(--gold); border: 0; border-radius: 0; }
+.dossier .sum-readout { display: flex; align-items: baseline; gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; flex-wrap: wrap; }
+.dossier .sum-val { font-family: var(--font-mono); font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dossier .mask-layout { display: grid; gap: 20px; grid-template-columns: minmax(300px, 1fr) minmax(280px, 0.85fr); }
+@media (max-width: 860px) {
+  /* minmax(0, 1fr), not 1fr: a bare 1fr track floors at its content's min-content, and
+     .sd-metrics (four mono numbers side by side) has a ~405px min-content — which forced both
+     panels wider than a phone viewport with no scroll container to reach the overflow, quietly
+     clipping the grid's fourth column off-screen. */
+  .dossier .mask-layout { grid-template-columns: minmax(0, 1fr); }
+}
+.dossier .grid-axes { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; margin-top: 14px; }
+.dossier .axis-y { display: flex; align-items: center; justify-content: center; }
+.dossier .axis-y span { writing-mode: vertical-rl; transform: rotate(180deg); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.dossier .axis-x { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); margin-bottom: 8px; text-align: center; }
+.dossier .state-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.dossier .cell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 14px 4px;
+  background: var(--panel3);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dossier .cell:hover { background: #222833; color: var(--text); }
+.dossier .cell.full { background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.55); color: #cfe0fb; }
+.dossier .cell.none { background: transparent; border-style: dashed; border-color: var(--line); color: var(--dim); }
+.dossier .cell.sel { outline: 2px solid var(--gold); outline-offset: -2px; color: var(--text); }
+.dossier .grid-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 16px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+.dossier .grid-legend span { display: flex; align-items: center; gap: 7px; }
+.dossier .sw { width: 10px; height: 10px; display: inline-block; border: 1px solid var(--line-strong); background: var(--panel3); }
+.dossier .sw-full { background: rgba(59, 130, 246, 0.35); border-color: rgba(59, 130, 246, 0.6); }
+.dossier .sw-none { background: transparent; border-style: dashed; }
+.dossier .state-detail { display: flex; flex-direction: column; gap: 16px; }
+.dossier .sd-title { font-family: var(--font-mono); font-size: 22px; font-weight: 600; }
+.dossier .sd-role { font-size: 14px; color: var(--muted); }
+.dossier .sd-board { display: flex; flex-direction: column; gap: 8px; }
+.dossier .sd-team { display: grid; grid-template-columns: 74px repeat(3, 1fr); gap: 6px; align-items: center; }
+.dossier .sd-team .who { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+.dossier .slot { height: 30px; border: 1px solid var(--line-strong); background: var(--panel3); display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--dim); }
+.dossier .slot.known-a { background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.55); color: #cfe0fb; }
+.dossier .slot.known-b { background: rgba(255, 59, 48, 0.16); border-color: rgba(255, 59, 48, 0.5); color: #ffd4d1; }
+.dossier .sd-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+/* Declared after the base rule so source order carries it: on a phone the four readouts stack
+   2x2 instead of demanding a single row wider than the viewport. */
+@media (max-width: 860px) {
+  .dossier .sd-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.dossier .sd-metrics div { background: var(--panel); padding: 10px; }
+.dossier .sd-metrics .k { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.dossier .sd-metrics .v { font-family: var(--font-mono); font-size: 16px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.dossier .sd-empty { font-size: 13px; color: var(--dim); border-top: 1px solid var(--line); padding-top: 14px; }
+.dossier .constraint { border-left: 2px solid var(--accent); }
+.dossier .constraint p { color: var(--muted); margin: 0; }
+.dossier .twocol { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); margin-top: 20px; }
+.dossier .col { border: 1px solid var(--line); background: var(--panel); }
+.dossier .col-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel2); font-size: 11px; }
+.dossier .code { font-family: var(--font-mono); font-size: 12px; line-height: 1.75; margin: 0; padding: 16px; overflow-x: auto; color: var(--text); white-space: pre; }
+.dossier .code .c { color: var(--dim); }
+.dossier footer { border-top: 1px solid var(--line); padding: 40px 0 60px; }
+.dossier .foot { display: grid; gap: 28px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.dossier .foot p { margin-top: 10px; line-height: 1.7; }
+.dossier .foot .mono { color: var(--muted); }
+
+/* ================= LaTeX (KaTeX, rendered at build time) =================
+   KaTeX ships its own font stack and sizing; these rules only fit it into the
+   dark substrate and stop a long display equation from widening the page. */
+.dossier .katex { color: var(--text); font-size: 1.06em; }
+.dossier .katex-display {
+  margin: 0;
+  padding: 2px 0 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.dossier .eqbox {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--gold);
+  padding: clamp(16px, 2.2vw, 24px) clamp(14px, 2.2vw, 24px);
+}
+.dossier .eqbox + .eqbox { margin-top: 12px; }
+.dossier .eqbox .katex-display { font-size: clamp(0.86rem, 1.5vw, 1rem); }
+/* inline math inside prose should not disturb the line rhythm */
+.dossier .katex .mord.text { font-family: var(--font-sans); }
+.dossier .eq-where {
+  font-size: 13.5px;
+  color: var(--muted);
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  max-width: 82ch;
+}
+.dossier .eq-where b { color: var(--text); font-weight: 600; }
+.dossier .eq-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 12px;
+}

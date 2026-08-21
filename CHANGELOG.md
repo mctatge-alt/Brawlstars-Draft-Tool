@@ -4,6 +4,17 @@ Notable, user-visible changes to [brawldraft.com](https://brawldraft.com). The s
 continuously from `main`, so entries are **dated, not versioned** — newest first. Routine
 retrains, doc edits, and internal refactors are left out unless they changed what users see.
 
+## 2026-08-21
+
+- **New page: the model dossier.** `/model` is a technical write-up of the machine learning behind
+  the board — the antisymmetric logit and the recency-weighted loss set in real LaTeX, nine
+  hand-drawn architecture diagrams (the strength path, the counter cross, the mask rows, the two
+  decay clocks, the training loop, calibration vs. draft state, signal shares), the full parameter
+  table, and the held-out numbers with the places the model loses. Two pieces are interactive: drag
+  the logit to watch P(A) + P(B) stay pinned at exactly 1, and click any cell of the 4x4 draft-state
+  grid to see what masking does to it. Equations are typeset at build time, so the page ships no
+  math JavaScript. "How it works" stays the plain-English version and links across to it.
+
 ## 2026-08-20
 
 - **Fixed: an emptied roster could borrow another visitor's.** If the Ranked power-floor filter

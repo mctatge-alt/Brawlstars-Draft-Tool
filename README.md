@@ -59,6 +59,8 @@ flowchart LR
 
 ## How it works
 
+> Live version, with diagrams and the held-out numbers: **[brawldraft.com/model](https://brawldraft.com/model)**.
+
 **1. Data.** The official API is player-centric, so a snowball crawler seeds top players from
 the leaderboards, harvests the other 5 tags from every ranked match, and dedupes by a stable
 match key (the same match appears in up to 6 players' logs). Result: 30k+ labeled

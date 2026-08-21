@@ -1,24 +1,29 @@
-import Logo from "@/components/Logo";
+import DocNav, { NAV } from "@/components/DocNav";
 
 export type Section = { heading: string; body: string; bullets?: string[] };
 export type Content = { title: string; intro: string; sections: Section[] };
 
-// Site-wide nav for the written pages. The board lives at "/", so it leads.
-const NAV = [
-  { href: "/", label: "Draft board" },
-  { href: "/purchases", label: "Upgrades" },
-  { href: "/guide", label: "Draft guide" },
-  { href: "/how-it-works", label: "How it works" },
-  { href: "/faq", label: "FAQ" },
-];
+// Minimal inline formatter: the drafted copy only ever uses **bold** and [links](/href), so a
+// full markdown dependency would be dead weight in a static export. One alternation walks both.
+const INLINE = /\*\*(.+?)\*\*|\[(.+?)\]\(([^)]+)\)/g;
 
-// Minimal inline formatter: the drafted copy only ever uses **bold**, so a full markdown
-// dependency would be dead weight in a static export. Splitting on the delimiter keeps the
-// odd indices as the emphasized runs.
 function inline(text: string) {
-  return text.split(/\*\*(.+?)\*\*/g).map((part, i) =>
-    i % 2 === 1 ? <strong key={i} className="font-semibold text-[var(--text)]">{part}</strong> : <span key={i}>{part}</span>
-  );
+  const out: React.ReactNode[] = [];
+  let last = 0, key = 0, m: RegExpExecArray | null;
+  INLINE.lastIndex = 0;
+  while ((m = INLINE.exec(text)) !== null) {
+    if (m.index > last) out.push(<span key={key++}>{text.slice(last, m.index)}</span>);
+    if (m[1] !== undefined) {
+      out.push(<strong key={key++} className="font-semibold text-[var(--text)]">{m[1]}</strong>);
+    } else {
+      out.push(
+        <a key={key++} href={m[3]} className="text-[var(--blue)] underline underline-offset-2 decoration-[var(--line-strong)] hover:decoration-[var(--blue)] hover:text-[var(--text)]">{m[2]}</a>
+      );
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(<span key={key++}>{text.slice(last)}</span>);
+  return out;
 }
 
 function Prose({ text }: { text: string }) {
@@ -28,34 +33,6 @@ function Prose({ text }: { text: string }) {
         <p key={i} className="mb-3 last:mb-0">{inline(para)}</p>
       ))}
     </>
-  );
-}
-
-// Tactical top bar shared by the written pages, so the docs read as the same console as the
-// board: mono nav, hairline rules, sharp corners. Long-form prose stays in the readable sans.
-function DocNav({ current }: { current: string }) {
-  return (
-    <nav className="panel flex flex-wrap items-center gap-x-1 gap-y-1 px-3 py-2 mb-8">
-      <a href="/" className="flex items-center gap-2 mr-3" aria-label="Brawl Draft home">
-        <Logo size={22} />
-        <span className="brand-gradient text-[14px]">BRAWL DRAFT</span>
-      </a>
-      <span className="label hidden sm:inline mr-2">// DOCS</span>
-      <div className="flex flex-wrap gap-x-1 ml-auto">
-        {NAV.map((n) => {
-          const on = n.href === current;
-          return (
-            <a key={n.href} href={n.href} aria-current={on ? "page" : undefined}
-              className="mono text-[11px] tracking-[0.06em] uppercase px-2.5 py-1.5 border ctl"
-              style={on
-                ? { color: "var(--text)", borderColor: "var(--accent)", boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent)" }
-                : { color: "var(--muted)", borderColor: "transparent" }}>
-              {n.label}
-            </a>
-          );
-        })}
-      </div>
-    </nav>
   );
 }
 
