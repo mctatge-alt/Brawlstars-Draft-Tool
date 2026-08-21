@@ -13,6 +13,13 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
   could quietly be scored against someone else's brawlers. An explicitly sent empty roster now
   personalizes against exactly that: nothing owned, just the season's free boosted brawlers.
 
+- **Bigger brawler portraits in the picker, and the boxes around them are gone.** Each grid cell had
+  grown to 88px while the portrait inside stayed pinned at 44px, so every brawler sat in the left
+  half of a muted grey box with dead space beside it. The portrait now fills its cell and the box is
+  gone entirely — with a rarity-colored border on every portrait, a second grey frame around it was
+  only competing. Portraits went from 44px to ~62px and a row now holds 11 instead of 8 (unchanged
+  at 6 on phones, just larger). Hovering lifts a portrait and glows it in its rarity color.
+
 - **Brawler portrait outlines now show rarity, like in-game.** Portrait borders used to repeat the
   brawler's class color, which the class chips already show. They now use the in-game rarity
   border colors (Rare green through Legendary yellow), and Ultra Legendary brawlers (Sirius, Kaze)

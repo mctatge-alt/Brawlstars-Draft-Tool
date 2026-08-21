@@ -264,21 +264,20 @@ select.ctl {
   animation: ultra-spin 2.4s linear infinite, ultra-glow 4.8s ease-in-out infinite;
 }
 
-/* picker tile */
-.tile {
+/* picker thumbnail — deliberately chrome-free: the portrait's own rarity border is the frame, so a
+   box around it would just be a second, muted frame competing with it. Hover lifts and casts a glow
+   in the brawler's rarity color (--tc) instead of recoloring a border that is already that color. */
+.thumb {
   position: relative;
-  border: 1px solid var(--line);
-  background: var(--panel2);
-  transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.1s ease;
+  transition: box-shadow 0.12s ease, transform 0.1s ease;
 }
-.group:hover > .tile { border-color: var(--tc, var(--line-strong)); transform: translateY(-1px); }
-.group:active > .tile { transform: translateY(0); }
+.group:hover > .thumb { transform: translateY(-1px); box-shadow: 0 0 10px -2px var(--tc, var(--line-strong)); }
+.group:active > .thumb { transform: translateY(0); }
 
 /* keyboard cursor for the brawler-picker grid (roving-tabindex arrow-key nav): a distinct blue ring
    on the focused tile. Plain :focus (not :focus-visible) so it's deterministic during arrow nav —
    and it won't linger after a mouse click, since placing a tile moves focus back to the search box. */
 .pick-tile:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
-.pick-tile:focus > .tile { border-color: var(--blue); }
 
 /* keyboard hint chip */
 .kbd {

@@ -163,17 +163,20 @@ function CountUp({ value, className }: { value: number; className?: string }) {
   return <span className={className}>{Math.round(v).toLocaleString()}</span>;
 }
 
-function Avatar({ b, size = 56, dim, ring, active }: { b?: Brawler; size?: number; dim?: boolean; ring?: string; active?: boolean }) {
+// `fluid` fills the parent's width instead of a fixed box — kept square by aspect-ratio, since the
+// source portraits aren't square and object-cover crops them.
+function Avatar({ b, size = 56, dim, ring, active, fluid }: { b?: Brawler; size?: number; dim?: boolean; ring?: string; active?: boolean; fluid?: boolean }) {
   const border = ring || (b ? RARITY_COLOR[b.rarity] || "#26303f" : "#26303f");
   // An explicit ring (the active-slot accent) beats the rarity treatment. The ultra border
   // lives entirely in .ultra-ring: an inline `border` shorthand would reset its border-image.
   const ultra = !ring && b?.rarity === "Ultra Legendary";
-  const cls = `object-cover ${active ? "slot-active" : ""} ${ultra ? "ultra-ring" : ""}`;
-  if (!b) return <div style={{ width: size, height: size, borderColor: border }} className="bg-[var(--panel2)] border" />;
+  const cls = `object-cover ${fluid ? "block" : ""} ${active ? "slot-active" : ""} ${ultra ? "ultra-ring" : ""}`;
+  const box = fluid ? { width: "100%", aspectRatio: "1 / 1" } : { width: `${size}px`, height: `${size}px` };
+  if (!b) return <div style={{ ...box, borderColor: border }} className="bg-[var(--panel2)] border" />;
   return (
     <img src={b.image_url} alt={b.name} title={b.name} width={size} height={size}
       className={cls}
-      style={cssVars({ width: `${size}px`, height: `${size}px`, opacity: dim ? "0.3" : "1", border: ultra ? undefined : `1px solid ${border}`, "--ring": border })} />
+      style={cssVars({ ...box, opacity: dim ? "0.3" : "1", border: ultra ? undefined : `1px solid ${border}`, "--ring": border })} />
   );
 }
 
@@ -1277,7 +1280,11 @@ export default function DraftBoard() {
                 e.preventDefault();
                 if (target >= 0) focusTile(target);
               }}
-              className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
+              // Tracks are sized so a 375px phone still fits 6 across (a 48px floor drops it to 5,
+              // costing a third of the brawlers visible without scrolling). p-1, not pr-1: scrolling
+              // clips at the padding box, and the top-match / keyboard-focus rings sit up to 4px
+              // outside a tile — with no padding they'd be shaved on the edge rows.
+              className="grid grid-cols-[repeat(auto-fill,minmax(44px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(58px,1fr))] gap-1.5 max-h-[300px] overflow-y-auto p-1">
               {filtered.map((b, i) => {
                 const isUsed = used.has(b.id);
                 const isBoosted = boostedSet.has(b.id);
@@ -1294,9 +1301,9 @@ export default function DraftBoard() {
                     onClick={() => place(b.id)} disabled={tileDisabled(b)}
                     className="pick-tile group relative disabled:cursor-not-allowed"
                     title={underPower ? `${b.name} · needs Power ${powerFloor} in ${bracket}` : restricted ? `${b.name} · not owned` : isBoosted ? `${b.name} (${b.cls}) · free this season` : `${b.name} (${b.cls})`}>
-                    <span className="tile block p-[3px]"
-                      style={cssVars({ "--tc": RARITY_COLOR[b.rarity] || "#26303f", borderColor: isTop ? "var(--accent)" : undefined, boxShadow: isTop ? "inset 0 0 0 1px var(--accent)" : undefined })}>
-                      <Avatar b={b} size={44} dim={isUsed || restricted} />
+                    <span className="thumb block"
+                      style={cssVars({ "--tc": RARITY_COLOR[b.rarity] || "#26303f", outline: isTop ? "2px solid var(--accent)" : undefined, outlineOffset: isTop ? "1px" : undefined })}>
+                      <Avatar b={b} fluid dim={isUsed || restricted} />
                     </span>
                     {isTop && <span className="mono absolute top-0 right-0 text-[8px] px-1 leading-tight" style={{ background: "var(--accent)", color: "#0a0a0c" }}>⏎</span>}
                     {underPower && !isUsed && (
@@ -1640,8 +1647,8 @@ function TopMetaStrip({ picks, byId, used, onPick, disabled }: {
                 <button key={p.brawler_id} onClick={() => onPick(p.brawler_id)} disabled={isUsed || disabled}
                   className="group relative disabled:cursor-not-allowed anim-snap"
                   title={`#${i + 1}  ${p.name}\n${pct(p.score)} pick score · ${pct(p.map_winrate)} map win rate\nassumes a full loadout`}>
-                  <span className="tile block p-[2px]" style={cssVars({ "--tc": (b && RARITY_COLOR[b.rarity]) || "#26303f" })}>
-                    <Avatar b={b} size={40} dim={isUsed} />
+                  <span className="thumb block" style={cssVars({ "--tc": (b && RARITY_COLOR[b.rarity]) || "#26303f" })}>
+                    <Avatar b={b} size={44} dim={isUsed} />
                   </span>
                   <span className="mono absolute -top-1 -left-1 text-[8px] px-0.5 leading-tight"
                     style={{ background: i === 0 ? "var(--gold)" : "var(--panel3)", color: i === 0 ? "#0a0a0c" : "var(--muted)", border: "1px solid var(--line)" }}>{i + 1}</span>
