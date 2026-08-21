@@ -75,7 +75,8 @@ static export.
 
 ### Roster/personalization in local dev — needs the local-only API (home machine)
 
-Anything gated on a loaded roster — the "I'm pick" seat checkboxes, owned-item filtering in the
+Anything gated on a loaded roster — the "I'm pick" seat checkboxes (Mythic+), the blind-pick
+personal pick column (Diamond and below), owned-item filtering in the
 loadout popover, mastery weighting, the `/purchases` advisor — is **dead on a plain
 `npm run dev`** (`⚠ roster service is down — personalization is off`). On the home machine it
 works with the two `.claude/launch.json` configs (verified 2026-08-19): start `backend-local`

@@ -13,6 +13,15 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
   glow. The picker-grid and top-meta tile hover accents follow rarity too, and the active-slot
   accent ring still takes precedence while a slot is hot.
 
+- **Diamond and below: pick suggestions split into meta + personal columns.** In blind-pick
+  brackets everyone on the team picks at once, so marking "which pick is you" never made sense
+  there — the seat checkboxes are gone at Diamond and below (Mythic+ keeps them and is unchanged).
+  Instead, once your tag loads, the suggestion rail shows two columns for the whole pick phase:
+  the map's meta picks, for advising teammates, beside your own best picks — filtered to what you
+  can field, weighted by your mastery and your record. Enter locks the top personal pick (marked
+  ⏎); with no tag you get the single meta list as before. The brawler picker stays unfiltered in
+  these brackets, since teammates' picks are logged from it too.
+
 - **Tab jumps to your first pick on the first press.** The shortcut skipped any unused ban slots as
   advertised, but refused to fire while the cursor sat in the type-to-place box — which is exactly
   where the board parks it on load and after every placement. So the first Tab merely walked focus

@@ -589,6 +589,10 @@ export default function DraftBoard() {
   const [activeOverride, setActiveOverride] = useState<Slot | null>(null);
   const [solo, setSolo] = useState(true);
   const [recs, setRecs] = useState<RecommendResponse | null>(null);
+  // Blind-pick dual columns only: the personalized pick list fetched alongside the general one.
+  const [personalRecs, setPersonalRecs] = useState<RecommendResponse | null>(null);
+  const [personalLoading, setPersonalLoading] = useState(false);
+  const [personalErr, setPersonalErr] = useState<string | null>(null);
   const [topPicks, setTopPicks] = useState<TopPick[]>([]);
   const [railOk, setRailOk] = useState(true);
   const [warnings, setWarnings] = useState<Warning[]>([]);
@@ -787,7 +791,10 @@ export default function DraftBoard() {
 
   // Personalize only the user's OWN pick: when the active slot is the seat they marked as
   // themselves. Teammate/enemy/ban slots draw from the full pool (their rosters aren't ours).
-  const myTurn = personalizeReady && mySeat != null && active != null
+  // Seat semantics only exist in the snake draft (Mythic+): under blind pick everyone on the team
+  // picks at once, so there is no "your seat's turn" — personalization there is the dual-column
+  // rail instead, and the whole grid stays unfiltered (you log teammates' picks too).
+  const myTurn = personalizeReady && !blindPick && mySeat != null && active != null
     && active.zone === "our" && active.index === mySeat;
   const chooseSeat = (i: number) => setMySeat((cur) => {
     const next = cur === i ? null : i;   // clicking the current seat clears it (personalization off)
@@ -862,6 +869,31 @@ export default function DraftBoard() {
     }, 120);
     return () => clearTimeout(t);
   }, [mapId, mode, our, their, bans, wePickFirst, solo, phase, myTurn, fieldableOwned, bracket, personalTag, blindPick]);
+
+  // Second fetch for the blind-pick dual columns: the personalized list (owned + fieldable +
+  // boosted, mastery and your own win-rates folded in). Runs alongside the general fetch above —
+  // under blind pick there's no seat/turn to gate on, the whole pick phase is "your pick".
+  useEffect(() => {
+    if (!blindPick || !personalizeReady) { setPersonalRecs(null); setPersonalErr(null); return; }
+    if (!mapId || !mode || phase !== "pick") return;
+    const body = {
+      map_id: mapId, mode,
+      our_team: our.filter((x): x is number => x != null),
+      their_team: [],                     // blind pick: the enemy is never visible
+      bans: bans.filter((x): x is number => x != null),
+      we_pick_first: true, solo_queue: solo, phase: "pick" as const,
+      personalize: true, personal_tag: personalTag,
+      roster: fieldableOwned, rank_bracket: bracket, top: 12,
+    };
+    setPersonalLoading(true);
+    const t = setTimeout(() => {
+      recommend(body)
+        .then((r) => { setPersonalRecs(r); setPersonalErr(null); })
+        .catch(() => setPersonalErr("couldn't score your picks — retrying on the next board change"))
+        .finally(() => setPersonalLoading(false));
+    }, 120);
+    return () => clearTimeout(t);
+  }, [blindPick, personalizeReady, mapId, mode, our, bans, solo, phase, fieldableOwned, bracket, personalTag]);
 
   useEffect(() => {
     if (!mapId || !mode) return;
@@ -989,9 +1021,10 @@ export default function DraftBoard() {
     const b = bid != null ? byId.get(bid) : undefined;
     const current = isCurrent(zone, index);
     // Loadout hint on drafted pick slots (not bans). On the seat you marked as yourself it filters to
-    // what you own; teammate/enemy slots show the mode's general best-fit loadout.
+    // what you own; teammate/enemy slots show the mode's general best-fit loadout. Under blind pick
+    // there are no seats (a stale saved seat must not claim a teammate's slot), so it's always general.
     const canHint = zone !== "ban" && bid != null;
-    const isMySeat = personalizeReady && zone === "our" && index === mySeat;
+    const isMySeat = personalizeReady && !blindPick && zone === "our" && index === mySeat;
     const hovered = hoverSlot?.zone === zone && hoverSlot?.index === index;
     return (
       <button
@@ -1043,7 +1076,13 @@ export default function DraftBoard() {
 
   const pickList = recs?.picks || [];
   const banList = recs?.bans || [];
-  const topPick = phase === "pick" ? pickList[0] : undefined;
+  // Diamond and below with a tag loaded: no seat to mark (everyone picks at once), so the rail
+  // splits into META + personal pick columns instead of one seat-personalized list.
+  const dualCols = blindPick && !!rosterTag && phase === "pick" && step.kind !== "done";
+  const personalPicks = dualCols ? (personalRecs?.picks || []) : [];
+  // Under the dual columns, Enter locks YOUR best pick — the meta column advises teammates.
+  // Everywhere else (and while your list is still loading) it stays the general #1.
+  const topPick = phase === "pick" ? (personalPicks[0] || pickList[0]) : undefined;
   const topBan = phase === "ban" ? banList[0] : undefined;
 
   return (
@@ -1133,15 +1172,28 @@ export default function DraftBoard() {
                   {our.map((_, i) => (
                     <div key={i} className="flex flex-col items-center gap-1.5">
                       <SlotBox zone="our" index={i} accent="var(--blue)" />
-                      <SeatCheck checked={mySeat === i} disabled={!personalizeReady}
-                        onToggle={() => personalizeReady && chooseSeat(i)} seat={i + 1} />
+                      {!blindPick && (
+                        <SeatCheck checked={mySeat === i} disabled={!personalizeReady}
+                          onToggle={() => personalizeReady && chooseSeat(i)} seat={i + 1} />
+                      )}
                     </div>
                   ))}
                 </div>
-                <SeatHint ready={personalizeReady} chosen={mySeat != null} name={roster?.name} active={myTurn}
-                  hasTag={!!rosterTag} error={roster?.error} />
+                {!blindPick && (
+                  <SeatHint ready={personalizeReady} chosen={mySeat != null} name={roster?.name} active={myTurn}
+                    hasTag={!!rosterTag} error={roster?.error} />
+                )}
                 {blindPick && (
-                  <div className="mono text-[10px] text-[var(--muted)] mt-3">🙈 ENEMY HIDDEN AT DIAMOND · PICKS OPTIMIZE YOUR OWN COMP.</div>
+                  // No seat checkboxes here: everyone on the team picks at the same time, so there's
+                  // no "your seat's turn" — the personalized column in the rail covers you instead.
+                  <div className="mt-3 space-y-1.5">
+                    <div className="mono text-[10px] text-[var(--muted)]">🙈 ENEMY HIDDEN AT DIAMOND · PICKS OPTIMIZE YOUR OWN COMP.</div>
+                    {roster?.error && (
+                      <div className="mono text-[9px]" style={{ color: "var(--red)" }} title={roster.error}>
+                        ⚠ {rosterFailReason(roster.error)}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
               {!blindPick && (
@@ -1269,7 +1321,7 @@ export default function DraftBoard() {
           <div className="panel">
             <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--line)]">
               <span className="label" style={{ color: callAccent }}>◆ {recTitle}</span>
-              {loading && <span className="mono text-[10px] text-[var(--muted)] caret">ANALYZING</span>}
+              {(loading || personalLoading) && <span className="mono text-[10px] text-[var(--muted)] caret">ANALYZING</span>}
             </div>
 
             {warnings.length > 0 && (
@@ -1287,22 +1339,30 @@ export default function DraftBoard() {
               <div className="p-4 mono text-[12px] text-[var(--muted)]">✓ DRAFT SET · SEE YOUR GAME PLAN BELOW.</div>
             )}
 
-            {/* THE CALL — the dominant #1 read */}
-            {step.kind !== "done" && phase === "pick" && topPick && (
+            {/* BLIND-PICK DUAL COLUMNS — general meta vs. your own roster, side by side */}
+            {dualCols && (
+              <PickColumns general={pickList} generalReady={!!recs}
+                personal={personalRecs ? (personalRecs.picks || []) : null}
+                personalError={roster?.error ? rosterFailReason(roster.error) : personalErr}
+                name={roster?.name} byId={byId} onPlace={place} />
+            )}
+
+            {/* THE CALL — the dominant #1 read (single-list mode) */}
+            {!dualCols && step.kind !== "done" && phase === "pick" && topPick && (
               <TheCall kind="pick" r={topPick} b={byId.get(topPick.brawler_id)} accent={callAccent} onPlace={() => place(topPick.brawler_id)} />
             )}
             {step.kind !== "done" && phase === "ban" && topBan && (
               <TheCall kind="ban" r={topBan} b={byId.get(topBan.brawler_id)} accent={callAccent} onPlace={() => place(topBan.brawler_id)} />
             )}
-            {!recs && step.kind !== "done" && <CallSkeleton />}
+            {!recs && step.kind !== "done" && !dualCols && <CallSkeleton />}
 
             {/* ranked runners-up */}
             <div>
-              {step.kind !== "done" && phase === "pick" &&
+              {!dualCols && step.kind !== "done" && phase === "pick" &&
                 pickList.slice(1).map((r, i) => <RankedPick key={r.brawler_id} r={r} i={i + 2} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
               {step.kind !== "done" && phase === "ban" &&
                 banList.slice(1).map((r, i) => <RankedBan key={r.brawler_id} r={r} i={i + 2} b={byId.get(r.brawler_id)} onClick={() => place(r.brawler_id)} />)}
-              {!recs && step.kind !== "done" && [0, 1, 2].map((i) => <RowSkeleton key={i} />)}
+              {!recs && step.kind !== "done" && !dualCols && [0, 1, 2].map((i) => <RowSkeleton key={i} />)}
             </div>
           </div>
 
@@ -1438,6 +1498,93 @@ function RankedBan({ r, i, b, onClick }: { r: BanRec; i: number; b?: Brawler; on
         {r.ban_value != null ? swingLabel(r.ban_value) : pct(r.threat)}
       </span>
     </button>
+  );
+}
+
+// ---- Blind-pick dual columns: META (anyone's best pick — advise teammates from it) beside the
+// personalized list (owned + fieldable + boosted, your mastery and win-rates). Replaces the single
+// TheCall+runners list at Diamond and below once a tag is loaded: with the whole team picking at
+// once there's no seat to personalize "in turn", so both reads stay visible the entire phase.
+const COL_PICKS = 8; // rows per column — keeps the rail scannable under a 20s pick window
+
+function PickColumns({ general, generalReady, personal, personalError, name, byId, onPlace }: {
+  general: PickRec[]; generalReady: boolean;
+  personal: PickRec[] | null;          // null → roster or personal scoring still loading
+  personalError: string | null; name?: string;
+  byId: Map<number, Brawler>; onPlace: (id: number) => void;
+}) {
+  // The ⏎ badge marks what Enter places: your #1 once it's live, else the meta #1 (matches topPick).
+  const personalLive = !!personal && personal.length > 0;
+  return (
+    <div className="grid grid-cols-2 anim-fade">
+      <div className="min-w-0 border-r border-[var(--line)]">
+        <div className="px-2.5 pt-2 pb-1 label cursor-help"
+          title="the strongest picks for anyone at a full loadout — advise your teammates from this side">◆ META</div>
+        {generalReady
+          ? general.slice(0, COL_PICKS).map((r, i) => (
+              <MiniPick key={r.brawler_id} r={r} b={byId.get(r.brawler_id)} top={i === 0}
+                accent="var(--blue)" enterHint={i === 0 && !personalLive} onClick={() => onPlace(r.brawler_id)} />
+            ))
+          : [0, 1, 2, 3].map((i) => <MiniRowSkeleton key={i} />)}
+      </div>
+      <div className="min-w-0">
+        <div className="px-2.5 pt-2 pb-1 label truncate cursor-help" style={{ color: "var(--gold)" }}
+          title="your best picks — brawlers you can field this bracket, weighted by your mastery and win-rates">
+          ◈ {(name || "YOU").toUpperCase()}
+        </div>
+        {personalError ? (
+          <div className="mono text-[10px] px-2.5 py-3 leading-snug" style={{ color: "var(--red)" }}>⚠ {personalError}</div>
+        ) : personal == null ? (
+          [0, 1, 2, 3].map((i) => <MiniRowSkeleton key={i} />)
+        ) : personal.length === 0 ? (
+          <div className="mono text-[10px] text-[var(--dim)] px-2.5 py-3 leading-snug">◦ nothing you own scores here — lean on the meta column</div>
+        ) : (
+          personal.slice(0, COL_PICKS).map((r, i) => (
+            <MiniPick key={r.brawler_id} r={r} b={byId.get(r.brawler_id)} top={i === 0}
+              accent="var(--gold)" enterHint={i === 0} onClick={() => onPlace(r.brawler_id)} />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Compact half-width row: no rank number (order implies it), the single strongest signal, and the
+// score. The full signal line + rationale live in the tooltip — a ~190px column can't fit them.
+function MiniPick({ r, b, top, accent, enterHint, onClick }: {
+  r: PickRec; b?: Brawler; top: boolean; accent: string; enterHint: boolean; onClick: () => void;
+}) {
+  const sig = pickSignals(r).sort((a, b2) => Math.abs(b2.v - 0.5) - Math.abs(a.v - 0.5))[0];
+  const detail = pickSignals(r).map((s) => `${s.k} ${two(s.v)}`).join(" · ");
+  return (
+    <button onClick={onClick}
+      className="card-rec flex items-center gap-2 w-full text-left px-2 py-1.5 border-t border-[var(--line)]"
+      style={cssVars({ "--glow": accent })}
+      title={`${r.name} · ${pct(r.score)} — ${pickReason(r)}\n${detail}`}>
+      <Avatar b={b} size={top ? 40 : 30} />
+      <div className="flex-1 min-w-0">
+        <div className={`font-semibold truncate ${top ? "text-[13px]" : "text-[12px]"}`}>{r.name}</div>
+        {sig && (
+          <span className="mono text-[9px] tabular-nums text-[var(--dim)]">
+            {sig.k} <span style={{ color: sig.v >= 0.5 ? "var(--green)" : "var(--muted)" }}>{two(sig.v)}</span>
+          </span>
+        )}
+      </div>
+      <div className="text-right shrink-0">
+        <div className={`mono font-bold tabular-nums ${top ? "text-[15px]" : "text-[13px]"}`}
+          style={{ color: scoreColor(r.score) }}>{pct(r.score)}</div>
+        {enterHint && <div className="mono text-[8px] px-1 leading-tight inline-block" style={{ background: accent, color: "#0a0a0c" }}>⏎</div>}
+      </div>
+    </button>
+  );
+}
+
+function MiniRowSkeleton() {
+  return (
+    <div className="flex items-center gap-2 px-2 py-1.5 border-t border-[var(--line)]">
+      <div className="w-[30px] h-[30px] skeleton" />
+      <div className="flex-1 space-y-1"><div className="h-2.5 w-16 skeleton" /><div className="h-2 w-10 skeleton" /></div>
+    </div>
   );
 }
 
