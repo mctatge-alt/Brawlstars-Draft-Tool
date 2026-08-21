@@ -9,6 +9,8 @@ player literally cannot pick (e.g. an un-maxed Bibi in Legendary) is the bug thi
 """
 from __future__ import annotations
 
+import types
+
 import bsdraft.api.main as M
 from bsdraft.api import schemas as S
 from bsdraft.engine.tiers import min_power_for_bracket
@@ -70,6 +72,48 @@ def test_unset_bracket_uses_universal_floor():
 
 def test_personalize_off_returns_none():
     assert _roster("Legendary", [(A11, 11)], personalize=False) is None
+
+
+# --- sent-but-empty vs omitted: the cross-visitor leak guard ---------------------
+
+class _ServerMastery:
+    """Engine-side Mastery stand-in: just the fields the fallback branch reads."""
+    power = 11
+    score = 0.9
+
+    def gaps(self):
+        return []
+
+
+def test_empty_roster_never_falls_back_to_server_roster():
+    # roster == [] means "sent, and nothing fieldable" — the client's power-floor filter can empty
+    # a real roster. On the keyed host _engine.roster is whatever /api/roster fetched LAST (another
+    # visitor), so falling through on [] scores one player's draft against another player's roster.
+    stranger = 90000042
+    prev = M._engine  # None under tests — the startup event that builds it never ran
+    M._engine = types.SimpleNamespace(roster={stranger: _ServerMastery()})
+    try:
+        r = _roster("Legendary", [])
+        assert r is not None, "personalize stays on for an empty roster"
+        assert stranger not in r, "another visitor's roster leaked into personalization"
+        from bsdraft.data import reference as R
+        assert set(r) == set(R.load_ranked_boosted())  # only the free boosted brawlers field
+    finally:
+        M._engine = prev
+
+
+def test_omitted_roster_falls_back_to_server_roster():
+    # roster=None (field omitted — a client with no roster of its own): the server's roster is the
+    # intended fallback for the local/home operator.
+    mine = 90000043
+    prev = M._engine
+    M._engine = types.SimpleNamespace(roster={mine: _ServerMastery()})
+    try:
+        req = S.RecommendRequest(map_id=1, mode="Brawl Ball", rank_bracket="Legendary",
+                                 personalize=True, roster=None)
+        assert mine in M._roster_for(req)
+    finally:
+        M._engine = prev
 
 
 def test_boosted_brawlers_are_added_and_clear_the_floor():

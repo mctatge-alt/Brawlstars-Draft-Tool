@@ -556,6 +556,12 @@ def _roster_for(req: S.RecommendRequest):
     folded in as available-at-full-loadout so they're recommendable even when unowned (an owned
     one keeps its real mastery). Returns None unless ``personalize`` is set.
 
+    The server-roster fallback applies only when the ``roster`` field is *omitted* (None). An
+    explicitly sent empty list means "this player fields nothing" (the client's power-floor filter
+    can empty a real roster) and must personalize against exactly that — on a multi-visitor host,
+    ``_engine.roster`` holds whichever roster ``/api/roster`` fetched *last*, so falling through
+    on ``[]`` would score one player's draft against another player's brawlers.
+
     Owned brawlers below the bracket's power floor are dropped: Ranked hard-blocks selecting a
     brawler under Power 9 (through Diamond) / Power 11 (Mythic up), so recommending one the player
     couldn't field is a bug — the very report that motivated this gate. Boosted brawlers arrive at
@@ -566,7 +572,7 @@ def _roster_for(req: S.RecommendRequest):
         return None
     floor = min_power_for_bracket(req.rank_bracket)
     fieldable = lambda power: power == 0 or power >= floor
-    if req.roster:
+    if req.roster is not None:
         roster = {e.id: _ReqMastery(e.mastery, e.gaps) for e in req.roster if fieldable(e.power)}
     elif _engine.roster:
         roster = {bid: m for bid, m in _engine.roster.items() if fieldable(m.power)}

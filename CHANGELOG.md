@@ -6,6 +6,13 @@ retrains, doc edits, and internal refactors are left out unless they changed wha
 
 ## 2026-08-20
 
+- **Fixed: an emptied roster could borrow another visitor's.** If the Ranked power-floor filter
+  left you nothing fieldable (say, no Power-11 brawlers in a Mythic+ bracket), the backend treated
+  your empty roster as "no roster sent" and fell back to the roster it had loaded last — which, on
+  a shared host, is whichever player looked theirs up most recently. Your "personalized" picks
+  could quietly be scored against someone else's brawlers. An explicitly sent empty roster now
+  personalizes against exactly that: nothing owned, just the season's free boosted brawlers.
+
 - **Brawler portrait outlines now show rarity, like in-game.** Portrait borders used to repeat the
   brawler's class color, which the class chips already show. They now use the in-game rarity
   border colors (Rare green through Legendary yellow), and Ultra Legendary brawlers (Sirius, Kaze)
